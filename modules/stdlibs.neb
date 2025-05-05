@@ -1,0 +1,41 @@
+função max usando(list)
+    conferir type(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
+    declarar maior => 0
+    caminhando i = 0 até len(list) faça
+        value = pegar(list, i)
+        se value > maior então
+            maior = value
+        fim
+    fim
+    retornar maior
+fim
+
+função min usando(list)
+    conferir type(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
+    declarar menor => pegar(list, 0)
+    caminhando i = 0 até len(list) faça
+        value = pegar(list, i)
+        se value < menor então
+            menor = value
+        fim
+    fim
+    retornar menor
+fim
+
+função soma usando(list)
+    conferir type(list) == "lista" usando "Argumento Inválido" detalhes "Esperava-se uma lista, não " + type(list)
+    declarar resultado => 0
+    caminhando i = 0 até len(list) faça
+        resultado = resultado + pegar(list, i)
+    fim
+    retornar resultado
+fim
+
+função média usando(list)
+    conferir type(list) == "lista" usando "Argumento Inválido" detalhes "Esperava-se uma lista, não " + type(list)
+    declarar res => 0
+    caminhando i = 0 até len(list) faça
+        res = res + pegar(list, i)
+    fim
+    retornar res / len(list)
+fim

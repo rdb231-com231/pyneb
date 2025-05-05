@@ -18,6 +18,7 @@ LETTERS = string.ascii_letters
 LETTERS += 'áéíóúãâêôãõçÁÉÍÓÚÃÂÊÔÃÕÇ'	
 LETTERS_DIGITS = LETTERS + DIGITS
 FILENAME = ''
+ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.neb')]
 
 DEFAULT_CONFIG = {
 	'version': "1.0.0",
@@ -325,7 +326,7 @@ class Lexer:
 	def skip_comment(self):
 		self.advance()
 
-		while self.current_char != '\n':
+		while self.current_char != '\n' and self.current_char:
 			self.advance()
 
 	def make_equals(self):
@@ -1940,6 +1941,20 @@ class BuiltInFunction(BaseFunction):
 	def execute_frase(self, exec_ctx):
 		return RTResult().success(Number(int(isinstance(exec_ctx.symbol_table.get('value'), String))))
 	execute_frase.arg_names = ['value']
+
+	def execute_type(self, exec_ctx):
+		if isinstance(exec_ctx.symbol_table.get('value'), Number):
+			return RTResult().success(String('número'))
+		elif isinstance(exec_ctx.symbol_table.get('value'), String):
+			return RTResult().success(String('string'))
+		elif isinstance(exec_ctx.symbol_table.get('value'), List):
+			return RTResult().success(String('lista'))
+		elif isinstance(exec_ctx.symbol_table.get('value'), Function):
+			return RTResult().success(String('função'))
+		else:
+			return RTResult().success(Number.null)
+
+	execute_type.arg_names = ['value']
 	
 	def execute_lista(self, exec_ctx):
 		return RTResult().success(Number(int(isinstance(exec_ctx.symbol_table.get('value'), List))))
@@ -2157,7 +2172,12 @@ class Interpreter:
 		module_name = file_path.value
 		
 		current_dir = os.path.dirname(os.path.abspath(FILENAME))
-		full_path = f"../{module_name}.neb" if module_name != 'stdlibs' else os.path.join(current_dir, 'modules/stdlibs.neb')
+		if not module_name + '.neb' in ALL_MODULES:
+			full_path = f'../{module_name}.neb'
+		else:
+			full_path = f'./modules/{module_name}.neb'
+		
+
 		
 		if not os.path.exists(full_path):
 			return res.failure(RTError(
@@ -2408,6 +2428,7 @@ global_symbol_table.set("procurar", BuiltInFunction("procurar"), True)
 global_symbol_table.set("colocar", BuiltInFunction("colocar"), True)
 global_symbol_table.set("estourar", BuiltInFunction("estourar"), True)
 global_symbol_table.set("limpar", BuiltInFunction("limpar"), True)
+global_symbol_table.set("type", BuiltInFunction("type"), True)
 
 def run(fn, text):
 	global FILENAME
