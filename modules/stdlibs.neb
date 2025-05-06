@@ -1,3 +1,5 @@
+# Module STDLIBS
+
 função max usando(list)
     conferir type(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
     declarar maior => 0
