@@ -1,0 +1,13 @@
+# modules/math.neb
+
+
+função fatorial usando(n)
+    conferir type(n) == "número" usando "Tipo Inválido" detalhes "Deve ser um número"
+    conferir n >= 0 usando "Valor Inválido" detalhes "Número deve ser positivo"
+    
+    declarar resultado => 1
+    caminhando i = 1 até n + 1 faça
+        resultado = resultado * i
+    fim
+    retornar resultado
+fim

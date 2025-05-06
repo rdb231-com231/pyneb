@@ -37,6 +37,16 @@ while True:
         print(' ')
         print(os.path.abspath(sys.path[0] + '\\nebula.bat'))
         break
+
+    elif sys.argv[1] == 'special-keys':
+        for k, v in pyneb.DEFAULT_CONFIG['special-keys'].items():
+            if k == 'special-keys': continue
+            print(f'{k}: {v}\n')
+        break
+
+    elif sys.argv[1] in pyneb.DEFAULT_CONFIG:
+        print(pyneb.DEFAULT_CONFIG[sys.argv[1]])
+        break
     
 
     else:
@@ -48,6 +58,7 @@ while True:
         try:
             with open(sys.argv[1], 'r', encoding='utf-8') as f:
                 text = f.read()
+                if not text: print("Arquivo vazio, favor adicionar algum código."); break
                 _, error, ctx = pyneb.run(sys.argv[1], text)
                 if error: 
                     print(error.as_string())

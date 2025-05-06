@@ -8,6 +8,8 @@ import sys
 import string
 import unicodedata
 import os
+import random
+import subprocess
 
 #######################################
 # CONSTANTS
@@ -21,8 +23,9 @@ FILENAME = ''
 ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.neb')]
 
 DEFAULT_CONFIG = {
-	'version': "1.0.0",
+	'version': "1.3.2",
 	'author': 'mewplush',
+	'publisher': 'mewplush',
 	'interpreter': 'pyneb',
 	'python': {
 		'author-version':'3.12.10',
@@ -32,9 +35,20 @@ DEFAULT_CONFIG = {
 	'special-keys': {
 		'__shell__': 'Nebula Shell',
 		'.config': 'Configuração do PyNeb',
-		'__path__': 'Caminho do arquivo'
+		'__path__': 'Caminho do arquivo',
+		'.version': 'Versão do PyNeb',
 	}
 }
+DEFAULT_CONFIG['special-keys'].update({key: value for key, value in DEFAULT_CONFIG.items()})
+
+def args(func, *args):
+	def decorator(func):
+		func.arg_names = []
+		for i in args:
+			func.arg_names.append(args)
+		return func
+	return decorator
+
 
 #######################################
 # ERRORS
@@ -144,6 +158,10 @@ TT_QUOTE = 'QUOTE'
 TT_LBRACKET = 'LBRACKET'
 TT_RBRACKET = 'RBRACKET'
 TT_NEWLINE = 'NEWLINE'
+TT_COLON = 'COLON'
+TT_LBRACE = 'LBRACE'
+TT_RBRACE = 'RBRACE'
+TT_DOT = 'DOT'
 
 KEYWORDS = [
 	'declarar',
@@ -262,6 +280,9 @@ class Lexer:
 				tok, error = self.make_not_equals()
 				if error: return [], error
 				tokens.append(tok)
+			elif self.current_char == '.':
+				tokens.append(Token(TT_DOT, pos_start=self.pos))
+				self.advance()
 			elif self.current_char == '<':
 				tokens.append(self.make_less_than())
 			elif self.current_char == '>':
@@ -274,6 +295,15 @@ class Lexer:
 				self.advance()
 			elif self.current_char == ']':
 				tokens.append(Token(TT_RBRACKET, pos_start=self.pos))
+				self.advance()
+			elif self.current_char == '{':
+				tokens.append(Token(TT_LBRACE, pos_start=self.pos))
+				self.advance()
+			elif self.current_char == '}':
+				tokens.append(Token(TT_RBRACE, pos_start=self.pos))
+				self.advance()
+			elif self.current_char == ':':
+				tokens.append(Token(TT_COLON, pos_start=self.pos))
 				self.advance()
 			else:
 				pos_start = self.pos.copy()
@@ -321,7 +351,7 @@ class Lexer:
 			return Token(TT_NE, pos_start=pos_start, pos_end=self.pos), None
 		else:
 			self.pos = pos_start
-			return None, IllegalCharError(pos_start, self.pos, "Expected '=' after '!'")
+			return None, IllegalCharError(pos_start, self.pos, "Esperava-se '=' depois de '!'")
 	
 	def skip_comment(self):
 		self.advance()
@@ -447,6 +477,27 @@ class ListNode:
 
 		self.pos_start = pos_start if pos_start else self.element_nodes.pos_start
 		self.pos_end = pos_end if pos_end else self.element_nodes.pos_end
+
+class DictNode:
+	def __init__(self, pairs, pos_start=None, pos_end=None):
+		self.pairs = pairs
+
+		self.pos_start = pos_start if pos_start else self.pairs[0].pos_start
+		self.pos_end = pos_end if pos_end else self.pairs[len(self.pairs) - 1].pos_end
+
+class AttrAccessNode:
+	def __init__(self, obj_node, attr_name_tok):
+		self.obj_node = obj_node
+		self.attr_name_tok = attr_name_tok
+		self.pos_start = obj_node.pos_start
+		self.pos_end = attr_name_tok.pos_end
+
+class ArrayAccessNode:
+	def __init__(self, obj_node, index_node):
+		self.obj_node = obj_node
+		self.index_node = index_node
+		self.pos_start = obj_node.pos_start
+		self.pos_end = index_node.pos_end
 
 class IfNode:
 	def __init__(self, cases, else_case):
@@ -916,6 +967,11 @@ class Parser:
 			res.register_advancement()
 			self.advance()
 			return res.success(StringNode(tok))
+		
+		elif tok.type == TT_LBRACE:
+			dict_expr = res.register(self.dict_expr())
+			if res.error: return res
+			return res.success(dict_expr)
 
 		elif tok.type == TT_IDENTIFIER:
 			res.register_advancement()
@@ -927,10 +983,9 @@ class Parser:
 
 				value = res.register(self.expr())
 				if res.error: return res
-
 				return res.success(VarAssignNode(tok, value))
-			
-			return res.success(VarAccessNode(tok))
+			else:
+				return res.success(VarAccessNode(tok))
 		
 		elif tok.matches(TT_KEYWORD, 'se'):
 			if_expr = res.register(self.if_expr())
@@ -1017,6 +1072,70 @@ class Parser:
 			res.register_advancement()
 			self.advance()
 			return res.success(ListNode(element_nodes, pos_start, self.current_tok.pos_end.copy()))
+	
+	def dict_expr(self):
+		res = ParseResult()
+		pairs = []
+		pos_start = self.current_tok.pos_start.copy()
+		
+		res.register_advancement()
+		self.advance()
+		
+		if self.current_tok.type == TT_NEWLINE:
+			self.advance(res)
+		
+		if self.current_tok.type == TT_RBRACE:
+			res.register_advancement()
+			self.advance()
+			return res.success(DictNode([], pos_start, self.current_tok.pos_end.copy()))
+		
+		while True:
+			if self.current_tok.type == TT_NEWLINE:
+				self.advance(res)
+
+			if not self.current_tok.type == TT_IDENTIFIER:
+				return res.failure(InvalidSyntaxError(
+					self.current_tok.pos_start, self.current_tok.pos_end,
+					"Esperava-se um identificador"
+				))
+			key = self.current_tok
+			if res.error: return res
+
+			self.advance(res)
+			
+			if self.current_tok.type != TT_COLON:
+				return res.failure(InvalidSyntaxError(
+					self.current_tok.pos_start, self.current_tok.pos_end,
+					"Esperava-se ':' depois de 'chave' de um dicionário"
+				))
+			
+			res.register_advancement()
+			self.advance()
+			
+			value = res.register(self.expr())
+			if res.error: return res
+			
+			pairs.append((key, value))
+			
+			if self.current_tok.type != TT_COMMA:
+				break
+				
+			res.register_advancement()
+			self.advance()
+		
+		
+		if self.current_tok.type == TT_NEWLINE:
+			self.advance(res)
+		
+		if self.current_tok.type != TT_RBRACE:
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				"Esperava-se ',' ou '}'"
+			))
+		
+		res.register_advancement()
+		self.advance()
+		return res.success(DictNode(pairs, pos_start, self.current_tok.pos_end.copy()))
 
 
 
@@ -1094,7 +1213,7 @@ class Parser:
 		elif self.current_tok.type != TT_NEWLINE:
 			return res.failure(InvalidSyntaxError(
 				self.current_tok.pos_start, self.current_tok.pos_end,
-				f"Expected '->' or NEWLINE"
+				f"Esperava-se '->' ou NOVA_LINHA"
 			))
 
 		res.register_advancement()
@@ -1251,42 +1370,72 @@ class Parser:
 	
 	def call(self):
 		res = ParseResult()
-		atom = res.register(self.atom())
+		node = res.register(self.atom())
 		if res.error: return res
 
-		if self.current_tok.type == TT_LPAREN:
-			res.register_advancement()
-			self.advance()
-			arg_nodes = []
-
-			if self.current_tok.type == TT_RPAREN:
+		while True:
+			if self.current_tok.type == TT_LPAREN:
+				# Tratar chamada de função
 				res.register_advancement()
 				self.advance()
-			else:
-				arg_nodes.append(res.register(self.expr()))
-				if res.error:
-					return res.failure(InvalidSyntaxError(
-						self.current_tok.pos_start, self.current_tok.pos_end,
-						"Syntaxe Inválida"
-					))
+				arg_nodes = []
 
-				while self.current_tok.type == TT_COMMA:
+				if self.current_tok.type == TT_RPAREN:
 					res.register_advancement()
 					self.advance()
-
+				else:
 					arg_nodes.append(res.register(self.expr()))
 					if res.error: return res
 
-				if self.current_tok.type != TT_RPAREN:
+					while self.current_tok.type == TT_COMMA:
+						res.register_advancement()
+						self.advance()
+						arg_nodes.append(res.register(self.expr()))
+						if res.error: return res
+
+					if self.current_tok.type != TT_RPAREN:
+						return res.failure(InvalidSyntaxError(
+							self.current_tok.pos_start, self.current_tok.pos_end,
+							"Esperava-se ')' ou ','"
+						))
+					res.register_advancement()
+					self.advance()
+				node = CallNode(node, arg_nodes)
+			elif self.current_tok.type == TT_DOT:
+				res.register_advancement()
+				self.advance()
+
+				if self.current_tok.type != TT_IDENTIFIER:
 					return res.failure(InvalidSyntaxError(
 						self.current_tok.pos_start, self.current_tok.pos_end,
-						"Esperava-se ')' ou ','"
+						"Esperava-se um identificador"
+					))
+
+				attr_name = self.current_tok
+				res.register_advancement()
+				self.advance()
+				node = AttrAccessNode(node, attr_name)
+			elif self.current_tok.type == TT_LBRACKET:
+				# Tratar acesso a array
+				res.register_advancement()
+				self.advance()
+
+				index_expr = res.register(self.expr())
+				if res.error: return res
+
+				if self.current_tok.type != TT_RBRACKET:
+					return res.failure(InvalidSyntaxError(
+						self.current_tok.pos_start, self.current_tok.pos_end,
+						"Esperava-se ']'"
 					))
 
 				res.register_advancement()
 				self.advance()
-			return res.success(CallNode(atom, arg_nodes))
-		return res.success(atom)
+				node = ArrayAccessNode(node, index_expr)
+			else:
+				break
+
+		return res.success(node)
 
 	def factor(self):
 		res = ParseResult()
@@ -1633,7 +1782,7 @@ class String(Value):
 	
 	def added_to(self, other):
 		if isinstance(other, String):
-			return String(self.value + other.value).set_context(self.context), None
+			return String(self.value + str(other.value)).set_context(self.context), None
 		elif isinstance(other, List):
 			return String(self.value + ", ".join(str(x) for x in other.elements)).set_context(self.context), None
 		elif isinstance(other, Number):
@@ -1730,6 +1879,57 @@ class List(Value):
 	def __repr__(self):
 		return f'[{", ".join([str(x) for x in self.elements])}]'
 
+class Dict(Value):
+	def __init__(self, elements):
+		super().__init__()
+		self.elements = elements  # List of (key, value) tuples
+		
+	def added_to(self, other):
+		if isinstance(other, Dict):
+			new_dict = self.copy()
+			for key, value in other.elements:
+				new_dict.elements.append((key.copy(), value.copy()))
+			return new_dict, None
+		return None, self.illegal_operation(other)
+	
+	def copy(self):
+		copy = Dict([(k, v.copy()) for k, v in self.elements])
+		copy.set_pos(self.pos_start, self.pos_end)
+		copy.set_context(self.context)
+		return copy
+	
+	def __str__(self):
+		pairs = [f"{str(k.value)}: {str(v.value)}" for k, v in self.elements]
+		return ", ".join(pairs)
+	
+	def __repr__(self):
+		return "{" + self.__str__() + "}"
+	
+	# Built-in methods
+	def keys(self):
+		return List([String(k.value) if isinstance(k.value, str) else Number(k.value) for k, v in self.elements])
+	
+	def values(self):
+		return List([Number(v.value) if isinstance(v.value, int) else String(v.value) for k, v in self.elements])
+	
+	def items(self):
+		return List([self.values(), self.keys()])
+	
+	def update(self, other):
+		
+		if isinstance(other, Dict):
+			for key, value in other.elements:
+				found = False
+				for i, (k, v) in enumerate(self.elements):
+					if k.value == key.value:
+						self.elements[i] = (k, value)
+						found = True
+						break
+				if not found:
+					self.elements.append((key, value))
+			return self
+		return None, self.illegal_operation(other)
+
 class BaseFunction(Value):
 	def __init__(self, name):
 		super().__init__()
@@ -1807,6 +2007,7 @@ class Function(BaseFunction):
 class BuiltInFunction(BaseFunction):
 	def __init__(self, name):
 		super().__init__(name)
+		self.obj = None
 	
 	def execute(self, args):
 		res = RTResult()
@@ -1829,6 +2030,7 @@ class BuiltInFunction(BaseFunction):
 		copy = BuiltInFunction(self.name)
 		copy.set_context(self.context)
 		copy.set_pos(self.pos_start, self.pos_end)
+		copy.obj = self.obj
 		return copy
 
 	def __repr__(self):
@@ -1935,7 +2137,7 @@ class BuiltInFunction(BaseFunction):
 	execute_número.arg_names = ['value']
 	
 	def execute_string(self, exec_ctx):
-		return RTResult().success(String(exec_ctx.symbol_table.get('value').value))
+		return RTResult().success(String(exec_ctx.symbol_table.get('value').value) if not isinstance(exec_ctx.symbol_table.get('value'), List) else exec_ctx.symbol_table.get('value').elements)
 	execute_string.arg_names = ['value']
 	
 	def execute_frase(self, exec_ctx):
@@ -1951,6 +2153,8 @@ class BuiltInFunction(BaseFunction):
 			return RTResult().success(String('lista'))
 		elif isinstance(exec_ctx.symbol_table.get('value'), Function):
 			return RTResult().success(String('função'))
+		elif isinstance(exec_ctx.symbol_table.get('value'), Dict):
+			return RTResult().success(String('dicionário'))
 		else:
 			return RTResult().success(Number.null)
 
@@ -2040,6 +2244,192 @@ class BuiltInFunction(BaseFunction):
 				exec_ctx
 			))
 	execute_raiz.arg_names = ['value']
+
+	def execute_fatiar(self, exec_ctx):
+		value = exec_ctx.symbol_table.get('valor')
+		
+		if not isinstance(value, String):
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"'{value}' não é uma string",
+				exec_ctx
+			))
+		
+		chars = [String(char) for char in value.value]
+		return RTResult().success(List(chars).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
+	execute_fatiar.arg_names = ['valor']
+
+	def execute_aleatório(self, exec_ctx):
+		if isinstance(exec_ctx.symbol_table.get('value'), Number) and isinstance(exec_ctx.symbol_table.get('max'), Number):
+			return RTResult().success(Number(random.randint(int(exec_ctx.symbol_table.get('value').value), int(exec_ctx.symbol_table.get('max').value))))
+		else:
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"'{exec_ctx.symbol_table.get('value')}' ou '{exec_ctx.symbol_table.get('max')}' não é um número.",
+				exec_ctx
+			))
+	execute_aleatório.arg_names = ['value', 'max']
+
+	def execute_ler_arquivo(self, exec_ctx):
+		caminho = exec_ctx.symbol_table.get('caminho').value
+		try:
+			with open(caminho, 'r', encoding='utf-8') as f:
+				return RTResult().success(String(f.read()))
+		except Exception as e:
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"Erro ao ler arquivo: {str(e)}",
+				exec_ctx
+			))
+	execute_ler_arquivo.arg_names = ['caminho']
+
+	def execute_escrever_arquivo(self, exec_ctx):
+		caminho = exec_ctx.symbol_table.get('caminho').value
+		conteúdo = exec_ctx.symbol_table.get('conteúdo').value
+		try:
+			with open(caminho, 'w', encoding='utf-8') as f:
+				f.write(conteúdo)
+			return RTResult().success(Number.true)
+		except Exception as e:
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"Erro ao escrever arquivo: {str(e)}",
+				exec_ctx
+			))
+	execute_escrever_arquivo.arg_names = ['caminho', 'conteúdo']
+
+	def execute_clicommand(self, exec_ctx):
+		res = RTResult()
+		comando = exec_ctx.symbol_table.get('comando')
+		
+		if not isinstance(comando, String):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma string",
+				exec_ctx
+			))
+		
+		try:
+			resultado = subprocess.run(
+				comando.value,
+				shell=True,
+				capture_output=True,
+				text=True,
+				timeout=30,
+				encoding='utf-8',
+				errors='replace'
+			)
+			
+			output = resultado.stdout.strip()
+			if resultado.returncode != 0:
+				return res.failure(RTError(self.pos_start, self.pos_end, f"\n[ERRO {resultado.returncode}] {resultado.stderr.strip()}"))
+			
+			return res.success(String(output))
+			
+		except subprocess.TimeoutExpired:
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Timeout: Comando excedeu 30 segundos",
+				exec_ctx
+			))
+		except Exception as e:
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				f"Erro na execução: {str(e)}",
+				exec_ctx
+			))
+
+	execute_clicommand.arg_names = ['comando']
+
+	def execute_eval(self, exec_ctx):
+		res = RTResult()
+		comando = exec_ctx.symbol_table.get('comando')
+		
+		if not isinstance(comando, String):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma string",
+				exec_ctx
+			))
+		
+		try:
+			rs, err, exec_ctx = run('<eval_expr>', comando.value)
+			if err: return res.failure(err)
+			return res.success(rs)
+		except Exception as e:
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				f"Erro na execução: {str(e)}",
+				exec_ctx
+			))
+
+	execute_eval.arg_names = ['comando']
+
+	def execute_python(self, exec_ctx):
+		res = RTResult()
+		comando = exec_ctx.symbol_table.get('comando')
+		
+		if not isinstance(comando, String):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma string",
+				exec_ctx
+			))
+		
+		try:
+			return res.success(eval(comando.value))
+		except Exception as e:
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				f"Erro na execução: {str(e)}",
+				exec_ctx
+			))
+
+	execute_python.arg_names = ['comando']
+
+	def execute_dict_keys(self, exec_ctx):
+		return RTResult().success(List(
+			[k.value for k, _ in self.obj.elements]
+		))
+	execute_dict_keys.arg_names = []
+
+	def execute_dict_values(self, exec_ctx):
+		return RTResult().success(List(
+			[v.copy() for _, v in self.obj.elements]
+		))
+	execute_dict_values.arg_names = []
+
+	def execute_dict_items(self, exec_ctx):
+		return RTResult().success(List([
+			List([k.value, v.copy()]) for k, v in self.obj.elements
+		]))
+	execute_dict_items.arg_names = []
+
+	def execute_update(self, exec_ctx):
+		res = RTResult()
+		other = exec_ctx.symbol_table.get("other")
+		self.obj = exec_ctx.symbol_table.get("obj")
+		
+		if not isinstance(other, Dict):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argument must be a dictionary",
+				exec_ctx
+			))
+		
+		for k, v in other.elements:
+			found = False
+			for idx, (existing_k, _) in enumerate(self.obj.elements):
+				if existing_k.value == k.value:
+					self.obj.elements[idx] = (k, v.copy())
+					found = True
+					break
+			if not found:
+				self.obj.elements.append((k, v.copy()))
+		
+		exec_ctx.symbol_table.get("obj").elements = self.obj.elements
+		return res.success(Dict([k, v.copy()] for k, v in self.obj.elements))
+	execute_update.arg_names = ['obj', 'other']
 
 #######################################
 # CONTEXT
@@ -2137,6 +2527,87 @@ class Interpreter:
 
 		return res.success(List(elements).set_context(context).set_pos(node.pos_start, node.pos_end))
 	
+	def visit_DictNode(self, node, context):
+		res = RTResult()
+		elements = []
+		
+		for key_node, value_node in node.pairs:
+			key = key_node
+			
+			if isinstance(value_node, (String, Number)):
+				value = value_node
+			else:
+				value = res.register(self.visit(value_node, context))
+			if res.error: return res
+			
+			elements.append((key, value))
+		
+		return res.success(Dict(elements).set_context(context).set_pos(node.pos_start, node.pos_end))
+	
+	def visit_AttrAccessNode(self, node, context):
+		res = RTResult()
+		obj = res.register(self.visit(node.obj_node, context))
+		if res.error: return res
+
+		attr_name = node.attr_name_tok.value
+
+		if isinstance(obj, Dict):
+			if attr_name in ["chaves", "valores", "itens"]:
+				# Create the built-in function and attach the dictionary
+				if attr_name == "chaves": attr_name = "keys"
+				elif attr_name == "valores": attr_name = "values"
+				elif attr_name == "itens": attr_name = "items"
+				func = BuiltInFunction(f"dict_{attr_name}")
+				func.obj = obj  # Attach the dictionary instance
+				func.set_context(context)
+				return res.success(func)
+			else:
+				# Handle key access
+				for key, value in obj.elements:
+					if key.value == attr_name:
+						return res.success(value.copy())
+				return res.failure(RTError(
+					node.pos_start, node.pos_end,
+					f"Key '{attr_name}' not found",
+					context
+				))
+		else:
+			return res.failure(RTError(
+				node.pos_start, node.pos_end,
+				"Attribute access only supported for dictionaries",
+				context
+			))
+	
+	def visit_ArrayAccessNode(self, node, context):
+		res = RTResult()
+		
+		# Get the object (list/dict) by evaluating the node
+		obj = res.register(self.visit(node.obj_node, context))
+		if res.error: return res
+		
+		# Get the index by evaluating the index node
+		index = res.register(self.visit(node.index_node, context))
+		if res.error: return res
+		
+		# Handle list access
+		if isinstance(obj, List):
+			try:
+				return res.success(obj.elements[int(index.value)])
+			except:
+				return res.failure(RTError(
+					node.pos_start, node.pos_end,
+					f"Index {index} out of range",
+					context
+				))
+		
+		# Handle other indexable types if needed
+		
+		return res.failure(RTError(
+			node.pos_start, node.pos_end,
+			"[] access only supported for lists",
+			context
+		))
+	
 	def visit_CheckNode(self, node, context):
 		res = RTResult()
 
@@ -2167,15 +2638,14 @@ class Interpreter:
 	
 	def visit_ImportNode(self, node, context):
 		res = RTResult()
-    
+	
 		file_path = node.file_path
 		module_name = file_path.value
 		
 		current_dir = os.path.dirname(os.path.abspath(FILENAME))
-		if not module_name + '.neb' in ALL_MODULES:
-			full_path = f'../{module_name}.neb'
-		else:
-			full_path = f'./modules/{module_name}.neb'
+		full_path = os.path.join(current_dir, 'modules', f'{module_name}.neb')
+		if not os.path.exists(full_path):
+			full_path = os.path.join(current_dir, f'{module_name}.neb')
 		
 
 		
@@ -2232,7 +2702,7 @@ class Interpreter:
 
 		return res.success(func_value)
 	
-	def visit_CallNode(self, node, context):
+	def visit_CallNode(self, node, context):		
 		res = RTResult()
 		args = []
 
@@ -2429,8 +2899,17 @@ global_symbol_table.set("colocar", BuiltInFunction("colocar"), True)
 global_symbol_table.set("estourar", BuiltInFunction("estourar"), True)
 global_symbol_table.set("limpar", BuiltInFunction("limpar"), True)
 global_symbol_table.set("type", BuiltInFunction("type"), True)
+global_symbol_table.set("fatiar", BuiltInFunction("fatiar"), True)
+global_symbol_table.set("aleatório", BuiltInFunction("aleatório"), True)
+global_symbol_table.set("ler_arquivo", BuiltInFunction("ler_arquivo"), True)
+global_symbol_table.set("escrever_arquivo", BuiltInFunction("escrever_arquivo"), True)
+global_symbol_table.set("executar", BuiltInFunction("clicommand"), True)
+global_symbol_table.set("eval", BuiltInFunction("eval"), True)
+global_symbol_table.set("python", BuiltInFunction("python"), True)
+global_symbol_table.set("update", BuiltInFunction("update"), True)
 
 def run(fn, text):
+	
 	global FILENAME
 	# Generate tokens
 	lexer = Lexer(fn, text)

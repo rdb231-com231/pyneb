@@ -1,10 +1,11 @@
-# Module STDLIBS
+# Module stdlibs
 
 função max usando(list)
     conferir type(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
     declarar maior => 0
     caminhando i = 0 até len(list) faça
         value = pegar(list, i)
+        conferir type(value) == "número" usando "Argumento Inválido" detalhes "Esperava-se um número, não " + type(value)
         se value > maior então
             maior = value
         fim
@@ -17,6 +18,7 @@ função min usando(list)
     declarar menor => pegar(list, 0)
     caminhando i = 0 até len(list) faça
         value = pegar(list, i)
+        conferir type(value) == "número" usando "Argumento Inválido" detalhes "Esperava-se um número" + type(value)
         se value < menor então
             menor = value
         fim
