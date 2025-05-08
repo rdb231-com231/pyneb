@@ -543,12 +543,13 @@ class VarAccessNode:
 		self.pos_end = self.var_name_tok.pos_end
 
 class VarAssignNode:
-	def __init__(self, var_name_tok, value_node, constant=False):
-		self.var_name_tok = var_name_tok
+	def __init__(self, var_name_tok, value_node, constant=False, change_value=False):
+		self.var_name_toks = var_name_tok
 		self.value_node = value_node
 		self.constant = constant
+		self.change_value = change_value	
 
-		self.pos_start = self.var_name_tok.pos_start
+		self.pos_start = self.var_name_toks[0].pos_start
 		self.pos_end = self.value_node.pos_end if self.value_node else self.var_name_tok.pos_end
 
 class BinOpNode:
@@ -733,10 +734,23 @@ class Parser:
 		if self.current_tok.matches(TT_KEYWORD, 'retornar'):
 			self.advance(res)
 
+			return_values = []
+
 			expr = res.try_register(self.expr())
 			if not expr:
 				self.reverse(res.to_reverse_count)
-			return res.success(ReturnNode(expr, pos_start, self.current_tok.pos_start.copy()))
+
+			return_values.append(expr)
+
+			while self.current_tok.type == TT_COMMA:
+				res.register_advancement()
+				self.advance()
+
+				expr = res.register(self.expr())
+				if res.error: return res
+
+				return_values.append(expr)
+			return res.success(ReturnNode(return_values, pos_start, self.current_tok.pos_start.copy()))
 	
 		elif self.current_tok.matches(TT_KEYWORD, 'conferir'):
 			self.advance(res)
@@ -983,7 +997,7 @@ class Parser:
 
 				value = res.register(self.expr())
 				if res.error: return res
-				return res.success(VarAssignNode(tok, value))
+				return res.success(VarAssignNode(tok, value, change_value=True))
 			else:
 				return res.success(VarAccessNode(tok))
 		
@@ -1049,6 +1063,8 @@ class Parser:
 			self.advance(res)
 			return res.success(ListNode(element_nodes, pos_start, self.current_tok.pos_end.copy()))
 		else:
+			if self.current_tok.type == TT_NEWLINE:
+				self.advance(res)
 			element_nodes.append(res.register(self.expr()))
 			if res.error:
 				return res.failure(InvalidSyntaxError(
@@ -1060,8 +1076,16 @@ class Parser:
 				res.register_advancement()
 				self.advance()
 
+				
+				if self.current_tok.type == TT_NEWLINE:
+					self.advance(res)
+
 				element_nodes.append(res.register(self.expr()))
 				if res.error: return res
+
+			
+			if self.current_tok.type == TT_NEWLINE:
+				self.advance(res)
 
 			if self.current_tok.type != TT_RBRACKET:
 				return res.failure(InvalidSyntaxError(
@@ -1480,6 +1504,8 @@ class Parser:
 		res = ParseResult()
 		constant = False
 
+		var_name_toks = []
+
 		if self.current_tok.matches(TT_KEYWORD, 'declarar'):
 			res.register_advancement()
 			self.advance()
@@ -1499,19 +1525,36 @@ class Parser:
 			res.register_advancement()
 			self.advance()
 
-			if self.current_tok.type == TT_SEMICOLON:
+			var_name_toks.append(var_name)
+
+			while self.current_tok.type == TT_COMMA:
+				res.register_advancement()
+				self.advance()
+
+				if self.current_tok.type != TT_IDENTIFIER:
+					return res.failure(InvalidSyntaxError(
+						self.current_tok.pos_start, self.current_tok.pos_end,
+						"Esperava-se um identificador"
+					))
+
+				var_name = self.current_tok
+				var_name_toks.append(var_name)
+				res.register_advancement()
+				self.advance()
+
+			if self.current_tok.type == TT_NEWLINE:
 				return res.success(VarAssignNode(var_name, None, constant=constant))
 			elif not (self.current_tok.matches(TT_KEYWORD, 'como') or self.current_tok.type in (TT_EQ, TT_ARROW)):
 				return res.failure(InvalidSyntaxError(
 					self.current_tok.pos_start, self.current_tok.pos_end,
-					"Esperava-se '=' ou '->' ou ';'",
+					"Esperava-se '=' ou '=>' ou ';'",
 				))
 
 			res.register_advancement()
 			self.advance()
 			expr = res.register(self.expr())
 			if res.error: return res
-			return res.success(VarAssignNode(var_name, expr, constant=constant))
+			return res.success(VarAssignNode(var_name_toks, expr, constant=constant))
 
 		node = res.register(self.bin_op(self.comp_expr, ((TT_KEYWORD, 'e'), (TT_KEYWORD, 'ou'))))
 
@@ -1754,6 +1797,7 @@ class Number(Value):
 	def ored_by(self, other):
 		if isinstance(other, Number):
 			return Number(int(self.is_true() or other.is_true())).set_context(self.context), None
+	
 	def notted(self):
 		return Number(int(0 if self.is_true() else 1)).set_context(self.context), None
 
@@ -1899,10 +1943,11 @@ class Dict(Value):
 		return copy
 	
 	def __str__(self):
-		pairs = [f"{str(k.value)}: {str(v.value)}" for k, v in self.elements]
+		pairs = [f"{str(k.value)}: {str(v.copy())}" for k, v in self.elements]
 		return ", ".join(pairs)
 	
 	def __repr__(self):
+		
 		return "{" + self.__str__() + "}"
 	
 	# Built-in methods
@@ -1963,7 +2008,10 @@ class BaseFunction(Value):
 		for i in range(len(args)):
 			arg_name = arg_names[i]
 			arg_value = args[i]
-			arg_value.set_context(exec_ctx)
+			try:
+				arg_value.set_context(exec_ctx)
+			except Exception as e:
+				pass
 			exec_ctx.symbol_table.set(arg_name, arg_value)
 	
 	def check_and_populate_args(self, arg_names, args, exec_ctx):
@@ -2389,7 +2437,7 @@ class BuiltInFunction(BaseFunction):
 
 	def execute_dict_keys(self, exec_ctx):
 		return RTResult().success(List(
-			[k.value for k, _ in self.obj.elements]
+			[String(k.value) for k, _ in self.obj.elements]
 		))
 	execute_dict_keys.arg_names = []
 
@@ -2401,34 +2449,30 @@ class BuiltInFunction(BaseFunction):
 
 	def execute_dict_items(self, exec_ctx):
 		return RTResult().success(List([
-			List([k.value, v.copy()]) for k, v in self.obj.elements
+			List([String(k.value), v.copy()]) for k, v in self.obj.elements
 		]))
 	execute_dict_items.arg_names = []
 
 	def execute_update(self, exec_ctx):
-		res = RTResult()
+		obj = exec_ctx.symbol_table.get("obj")
 		other = exec_ctx.symbol_table.get("other")
-		self.obj = exec_ctx.symbol_table.get("obj")
-		
-		if not isinstance(other, Dict):
-			return res.failure(RTError(
+
+		if not isinstance(obj, Dict):
+			return RTResult().failure(RTError(
 				self.pos_start, self.pos_end,
-				"Argument must be a dictionary",
+				"Primeiro argumento deve ser um dicionário",
 				exec_ctx
 			))
-		
-		for k, v in other.elements:
-			found = False
-			for idx, (existing_k, _) in enumerate(self.obj.elements):
-				if existing_k.value == k.value:
-					self.obj.elements[idx] = (k, v.copy())
-					found = True
-					break
-			if not found:
-				self.obj.elements.append((k, v.copy()))
-		
-		exec_ctx.symbol_table.get("obj").elements = self.obj.elements
-		return res.success(Dict([k, v.copy()] for k, v in self.obj.elements))
+
+		if not isinstance(other, Dict):
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				"Segundo argumento deve ser um dicionário",
+				exec_ctx
+			))
+
+		obj.elements.extend((k, v) for k, v in other.elements)
+		return RTResult().success(Dict(obj.elements).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
 	execute_update.arg_names = ['obj', 'other']
 
 #######################################
@@ -2509,12 +2553,23 @@ class Interpreter:
 
 	def visit_VarAssignNode(self, node, context):
 		res = RTResult()
-		var_name = node.var_name_tok.value
-		if node.value_node: value = res.register(self.visit(node.value_node, context))
-		else: value = Number(0).set_context(context).set_pos(node.pos_start, node.pos_end)
+    
+		value = res.register(self.visit(node.value_node, context))
 		if res.should_return(): return res
-
-		context.symbol_table.set(var_name, value, node.constant)
+		
+		if len(node.var_name_toks) > 1:
+			if not isinstance(value, List) or (len(value.elements) or 1) != len(node.var_name_toks):
+				return res.failure(RTError(
+					node.pos_start, node.pos_end,
+					f"Quantidade de variáveis ({len(node.var_name_toks)}) diferente da quantidade de valores ({len(value.elements)}).",
+					context
+				))
+				
+			for var_tok, element in zip(node.var_name_toks, value.elements):
+				context.symbol_table.set(var_tok.value, element.copy(), node.constant)
+		else:
+			context.symbol_table.set(node.var_name_toks[0].value, value, node.constant)
+			
 		return res.success(value)
 	
 	def visit_ListNode(self, node, context):
@@ -2532,7 +2587,7 @@ class Interpreter:
 		elements = []
 		
 		for key_node, value_node in node.pairs:
-			key = key_node
+			key = String(key_node.value)
 			
 			if isinstance(value_node, (String, Number)):
 				value = value_node
@@ -2642,17 +2697,17 @@ class Interpreter:
 		file_path = node.file_path
 		module_name = file_path.value
 		
-		current_dir = os.path.dirname(os.path.abspath(FILENAME))
+		current_dir = sys.path[0]
 		full_path = os.path.join(current_dir, 'modules', f'{module_name}.neb')
 		if not os.path.exists(full_path):
-			full_path = os.path.join(current_dir, f'{module_name}.neb')
+			full_path = os.path.join(current_dir, f'../{module_name}.neb')
 		
 
 		
 		if not os.path.exists(full_path):
 			return res.failure(RTError(
 				node.pos_start, node.pos_end,
-				f"Module '{module_name}' not found",
+				f"Module '{module_name}' em caminho '{full_path}' não encontrado.",
 				context
 			))
 		
@@ -2856,14 +2911,15 @@ class Interpreter:
 
 	def visit_ReturnNode(self, node, context):
 		res = RTResult()
+		values = []
 
-		if node.node_to_return:
-			value = res.register(self.visit(node.node_to_return, context))
+		for value_node in node.node_to_return:
+			values.append(res.register(self.visit(value_node, context)))
 			if res.should_return(): return res
-		else:
-			value = Number.null
 
-		return res.success_return(value)
+		return_value = List(values) if len(values) > 1 else values[0] if values else Number.null
+
+		return res.success_return(return_value)
 	
 	def visit_ContinueNode(self, node, context):
 		return RTResult().success_continue()
