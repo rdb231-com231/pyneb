@@ -162,6 +162,8 @@ TT_COLON = 'COLON'
 TT_LBRACE = 'LBRACE'
 TT_RBRACE = 'RBRACE'
 TT_DOT = 'DOT'
+TT_FTEXT = 'FTEXT'
+TT_FEXPR = 'FEXPR'
 
 KEYWORDS = [
 	'declarar',
@@ -198,9 +200,10 @@ KEYWORDS = [
 ]
 
 class Token:
-	def __init__(self, type_, value=None, pos_start=None, pos_end=None):
+	def __init__(self, type_, value=None, pos_start=None, pos_end=None, parts=None):
 		self.type = type_
 		self.value = value
+		self.parts = parts
 
 		if pos_start:
 			self.pos_start = pos_start.copy()
@@ -232,6 +235,11 @@ class Lexer:
 	def advance(self):
 		self.pos.advance(self.current_char)
 		self.current_char = self.text[self.pos.idx] if self.pos.idx < len(self.text) else None
+	
+	def peek(self):
+		peek_pos = self.pos.idx + 1
+		return self.text[peek_pos] if peek_pos < len(self.text) else None
+
 
 	def make_tokens(self):
 		tokens = []
@@ -393,30 +401,57 @@ class Lexer:
 			return Token(TT_GT, pos_start=pos_start, pos_end=self.pos)
 	
 	def make_string(self):
-		string = ''
+		string_parts = []
+		full_string = ""
 		pos_start = self.pos.copy()
-		esc_char = False
 		self.advance()
+		current_text = ""
+		escape_char = False
 		
-		esc_chars = {
-			'n': '\n',
-			't': '\t'
-		}
-		while self.current_char != None and (self.current_char != '"' or esc_char):
-			if esc_char:
-				string += esc_chars.get(self.current_char, self.current_char)
-			else:
-				if self.current_char == '\\':
-					esc_char = True
+		while self.current_char is not None and (self.current_char != '"' or escape_char):
+			full_string += self.current_char
+			if escape_char:
+				current_text += self.handle_escape_char()
+				escape_char = False
+			elif self.current_char == "\\":
+				escape_char = True
+				self.advance()
+			elif self.current_char == "$" and self.peek() == "{":
+				if current_text:
+					string_parts.append(('TEXT', current_text))
+					current_text = ""
+				
+				self.advance()
+				self.advance()
+				
+				expr_tokens = []
+				while self.current_char is not None and self.current_char != "}":
+					full_string += self.current_char
+					expr_tokens.append(self.current_char)
 					self.advance()
-					continue
-				string += self.current_char
-
-			self.advance()
-			esc_char = False
-	
+				
+				if self.current_char != "}":
+					return None, IllegalCharError(pos_start, self.pos, "Expressão não fechada com }")
+				
+				self.advance()
+				
+				expr_lexer = Lexer(f"<fstring>", "".join(expr_tokens))
+				tokens, error = expr_lexer.make_tokens()
+				if error: return None, error
+				
+				string_parts.append(('EXPR', tokens))
+			else:
+				current_text += self.current_char
+				self.advance()
+		
+		if current_text:
+			string_parts.append(('TEXT', current_text))
+		
+		if self.current_char != '"':
+			return None, IllegalCharError(pos_start, self.pos, "String não fechada")
+		
 		self.advance()
-		return Token(TT_STRING, string, pos_start, self.pos)
+		return Token(TT_STRING, ''.join(full_string), pos_start, self.pos, parts=(string_parts, full_string))
 
 #######################################
 # NODES
@@ -470,6 +505,17 @@ class StringNode:
 
 	def __repr__(self):
 		return f'{self.tok}'
+
+class FStringNode:
+	def __init__(self, parts, pos_start, pos_end):
+		self.parts = parts
+
+		self.pos_start = pos_start
+		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f"f'{self.parts}'"
+	
 
 class ListNode:
 	def __init__(self, element_nodes, pos_start=None, pos_end=None):
@@ -548,6 +594,9 @@ class VarAssignNode:
 		self.value_node = value_node
 		self.constant = constant
 		self.change_value = change_value	
+
+		if not isinstance(self.var_name_toks, list):
+			self.var_name_toks = [var_name_tok]
 
 		self.pos_start = self.var_name_toks[0].pos_start
 		self.pos_end = self.value_node.pos_end if self.value_node else self.var_name_tok.pos_end
@@ -677,6 +726,9 @@ class Parser:
 		
 		if self.tok_idx >= 0 and self.tok_idx < len(self.tokens):
 			self.current_tok = self.tokens[self.tok_idx]
+		
+		if not isinstance(self.current_tok, Token):
+			raise SyntaxError(f"Token inválido: {self.current_tok}")
 
 	def parse(self):
 		res = self.statements()
@@ -971,6 +1023,7 @@ class Parser:
 	def atom(self):
 		res = ParseResult()
 		tok = self.current_tok
+		pos_start = self.current_tok.pos_start.copy()
 
 		if tok.type in (TT_INT, TT_FLOAT):
 			res.register_advancement()
@@ -978,10 +1031,21 @@ class Parser:
 			return res.success(NumberNode(tok))
 		
 		elif tok.type == TT_STRING:
-			res.register_advancement()
-			self.advance()
-			return res.success(StringNode(tok))
-		
+			parts = []
+			pos_start = tok.pos_start.copy()
+			
+			for part_type, part_value in tok.parts[0]:
+				if part_type == 'TEXT':
+					parts.append(StringNode(Token(TT_STRING, part_value, pos_start, pos_start)))
+				elif part_type == 'EXPR':
+					expr_parser = Parser(part_value)
+					expr_node = expr_parser.parse()
+					if expr_node.error:
+						return res.failure(expr_node.error)
+					parts.append(expr_node.node)
+			
+			self.advance(res)
+			return res.success(FStringNode(parts, pos_start, tok.pos_end))
 		elif tok.type == TT_LBRACE:
 			dict_expr = res.register(self.dict_expr())
 			if res.error: return res
@@ -1284,10 +1348,10 @@ class Parser:
 		res.register_advancement()
 		self.advance()
 
-		if self.current_tok.type != TT_EQ:
+		if not self.current_tok.type in (TT_EQ, TT_ARROW) and not self.current_tok.matches(TT_KEYWORD, 'de'):
 			return res.failure(InvalidSyntaxError(
 				self.current_tok.pos_start, self.current_tok.pos_end,
-				"Esperava-se '=' após o identificador"
+				"Esperava-se '=', '=>' ou 'de' após o identificador"
 			))
 
 		res.register_advancement()
@@ -1820,9 +1884,22 @@ Number.null = Number(0)
 
 class String(Value):
 	def __init__(self, value):
-		self.value = value
-		self.set_pos()
-		self.set_context()
+		super().__init__()
+		if isinstance(value, list):
+			self.parts = value
+			self.value = self._combine_parts()
+		else:
+			self.value = str(value)
+			self.parts = [('TEXT', self.value)]
+
+	def _combine_parts(self):
+		combined = ""
+		for part_type, part_value in self.parts:
+			if part_type == 'TEXT':
+				combined += part_value
+			elif part_type == 'EXPR':
+				combined += str(part_value)
+		return combined
 	
 	def added_to(self, other):
 		if isinstance(other, String):
@@ -1935,6 +2012,12 @@ class Dict(Value):
 				new_dict.elements.append((key.copy(), value.copy()))
 			return new_dict, None
 		return None, self.illegal_operation(other)
+	
+	def change_val(self, key, value):
+		for i, (k, v) in enumerate(self.elements):
+			if k.value == key.value:
+				self.elements[i] = (k, value)
+				return
 	
 	def copy(self):
 		copy = Dict([(k, v.copy()) for k, v in self.elements])
@@ -2084,6 +2167,76 @@ class BuiltInFunction(BaseFunction):
 	def __repr__(self):
 		return f"< função predefinida {self.name} em (<stdlib>) >"
 	
+	def execute_list_mudar(self, exec_ctx):
+		lst = self.obj
+		if not isinstance(lst, List):
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"'{lst}' não é uma lista.",
+				exec_ctx
+			))
+		
+		index = exec_ctx.symbol_table.get('index')
+		value = exec_ctx.symbol_table.get('value')
+
+		try:
+			lst.elements[int(index.value)] = value
+			return RTResult().success(value)
+		except:
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"Indice '{index}' fora do intervalo, index não existe.",
+				exec_ctx
+			))
+	execute_list_mudar.arg_names = ['index', 'value']
+
+	def execute_dict_extender(self, exec_ctx):
+		dictA = self.obj
+		dictB = exec_ctx.symbol_table.get('dictB')
+
+		if not isinstance(dictA, Dict):
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				"Primeiro argumento deve ser um dicionário",
+				exec_ctx
+			))
+
+		if not isinstance(dictB, Dict):
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				"Segundo argumento deve ser um dicionário",
+				exec_ctx
+			))
+
+		dictA.values.update(dictB.values)
+		return RTResult().success(Dict(dictA.values).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
+	execute_dict_extender.arg_names = ['dictB']
+
+	def execute_dict_mudar(self, exec_ctx):
+		res = RTResult()
+		key = exec_ctx.symbol_table.get('key')
+		value = exec_ctx.symbol_table.get('value')
+
+		if not isinstance(key, String):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Primeiro argumento deve ser uma string",
+				exec_ctx
+			))
+
+		f = False
+		for i, (k, v) in enumerate(self.obj.elements):
+			if k.value == key.value:
+				self.obj.elements[i] = (k, value)
+				f = True
+				break
+		if not f:
+			self.obj.elements.append((key, value))
+		
+		return RTResult().success(self.obj)
+
+	execute_dict_mudar.arg_names = ['key', 'value']
+		
 	def execute_falar(self, exec_ctx):
 		print(str(exec_ctx.symbol_table.get('value')))
 		return RTResult().success(str(exec_ctx.symbol_table.get('value')))
@@ -2128,8 +2281,8 @@ class BuiltInFunction(BaseFunction):
 			))
 	execute_len.arg_names = ['value']
 
-	def execute_procurar(self, exec_ctx):
-		lst = exec_ctx.symbol_table.get('list')
+	def execute_list_procurar(self, exec_ctx):
+		lst = self.obj
 		val = exec_ctx.symbol_table.get('value')
 
 		for i in lst.elements:
@@ -2137,18 +2290,18 @@ class BuiltInFunction(BaseFunction):
 				return RTResult().success(Number(lst.elements.index(i)))
 
 		return RTResult().success(Number(-1))
-	execute_procurar.arg_names = ['list', 'value']
+	execute_list_procurar.arg_names = ['value']
 
-	def execute_colocar(self, exec_ctx):
-		lst = exec_ctx.symbol_table.get('list')
+	def execute_list_colocar(self, exec_ctx):
+		lst = self.obj
 		val = exec_ctx.symbol_table.get('value')
 
 		lst.elements.append(val)
 		return RTResult().success(val)
-	execute_colocar.arg_names = ['list', 'value']
+	execute_list_colocar.arg_names = ['value']
 
-	def execute_estourar(self, exec_ctx):
-		lst = exec_ctx.symbol_table.get('list')
+	def execute_list_estourar(self, exec_ctx):
+		lst = self.obj
 		index = exec_ctx.symbol_table.get('index')
 
 		try:
@@ -2159,7 +2312,7 @@ class BuiltInFunction(BaseFunction):
 				f"Indice '{index}' fora do intervalo, index não existe.",
 				exec_ctx
 			))
-	execute_estourar.arg_names = ['list', 'index']
+	execute_list_estourar.arg_names = ['index']
 
 	def execute_perguntar(self, exec_ctx):
 		text = input(exec_ctx.symbol_table.get('prompt').value)
@@ -2216,30 +2369,31 @@ class BuiltInFunction(BaseFunction):
 		return RTResult().success(Number(int(isinstance(exec_ctx.symbol_table.get('value'), Function))))
 	execute_func.arg_names = ['value']
 
-	def execute_picotar(self, exec_ctx):
-		if isinstance(exec_ctx.symbol_table.get('value'), String):
-			return RTResult().success(List(exec_ctx.symbol_table.get('value').value.split()))
+	def execute_string_picotar(self, exec_ctx):
+		val = self.obj
+		if isinstance(val, String):
+			return RTResult().success(List(self.obj.value.split()))
 		else:
 			return RTResult().failure(RTError(
 				self.pos_start, self.pos_end,
-				f"'{exec_ctx.symbol_table.get('value')}' não é uma string.",
+				f"'{self.obj}' não é uma string.",
 				exec_ctx
 			))
-	execute_picotar.arg_names = ['value']
+	execute_string_picotar.arg_names = []
 
-	def execute_limpar(self, exec_ctx):
-		if isinstance(exec_ctx.symbol_table.get('value'), String):
-			return RTResult().success(List(exec_ctx.symbol_table.get('value').value.strip()))
+	def execute_string_limpar(self, exec_ctx):
+		if isinstance(self.obj, String):
+			return RTResult().success(List(self.obj.value.strip()))
 		else:
 			return RTResult().failure(RTError(
 				self.pos_start, self.pos_end,
-				f"'{exec_ctx.symbol_table.get('value')}' não é uma string.",
+				f"'{self.obj}' não é uma string.",
 				exec_ctx
 			))
-	execute_limpar.arg_names = ['value']
+	execute_string_limpar.arg_names = []
 
-	def execute_extender(self, exec_ctx):
-		listA = exec_ctx.symbol_table.get("listA")
+	def execute_list_extender(self, exec_ctx):
+		listA = self.obj
 		listB = exec_ctx.symbol_table.get("listB")
 
 		if not isinstance(listA, List):
@@ -2258,7 +2412,7 @@ class BuiltInFunction(BaseFunction):
 
 		listA.elements.extend(listB.elements)
 		return RTResult().success(List(listA.elements).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
-	execute_extender.arg_names = ["listA", "listB"]
+	execute_list_extender.arg_names = ["listB"]
 
 	def execute_quadrado(self, exec_ctx):
 		if isinstance(exec_ctx.symbol_table.get('value'), Number):
@@ -2293,8 +2447,8 @@ class BuiltInFunction(BaseFunction):
 			))
 	execute_raiz.arg_names = ['value']
 
-	def execute_fatiar(self, exec_ctx):
-		value = exec_ctx.symbol_table.get('valor')
+	def execute_string_fatiar(self, exec_ctx):
+		value = self.obj
 		
 		if not isinstance(value, String):
 			return RTResult().failure(RTError(
@@ -2305,7 +2459,7 @@ class BuiltInFunction(BaseFunction):
 		
 		chars = [String(char) for char in value.value]
 		return RTResult().success(List(chars).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
-	execute_fatiar.arg_names = ['valor']
+	execute_string_fatiar.arg_names = []
 
 	def execute_aleatório(self, exec_ctx):
 		if isinstance(exec_ctx.symbol_table.get('value'), Number) and isinstance(exec_ctx.symbol_table.get('max'), Number):
@@ -2435,6 +2589,12 @@ class BuiltInFunction(BaseFunction):
 
 	execute_python.arg_names = ['comando']
 
+	def execute_list_invertida(self, exec_ctx):
+		return RTResult().success(List(
+			self.obj.elements[::-1]
+		).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
+	execute_list_invertida.arg_names = []
+
 	def execute_dict_keys(self, exec_ctx):
 		return RTResult().success(List(
 			[String(k.value) for k, _ in self.obj.elements]
@@ -2535,6 +2695,22 @@ class Interpreter:
 		return RTResult().success(
 			String(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
 		)
+	
+	def visit_FStringNode(self, node, context):
+		res = RTResult()
+		evaluated_parts = []
+		
+		for part in node.parts:
+			if isinstance(part, StringNode):
+				# Static text part
+				evaluated_parts.append(('TEXT', part.tok.value))
+			else:
+				# Evaluate expression part
+				value = res.register(self.visit(part, context))
+				if res.error: return res
+				evaluated_parts.append(('EXPR', value))
+		
+		return res.success(String(evaluated_parts))
 
 	def visit_VarAccessNode(self, node, context):
 		res = RTResult()
@@ -2553,7 +2729,7 @@ class Interpreter:
 
 	def visit_VarAssignNode(self, node, context):
 		res = RTResult()
-    
+	
 		value = res.register(self.visit(node.value_node, context))
 		if res.should_return(): return res
 		
@@ -2607,7 +2783,7 @@ class Interpreter:
 		attr_name = node.attr_name_tok.value
 
 		if isinstance(obj, Dict):
-			if attr_name in ["chaves", "valores", "itens"]:
+			if attr_name in ["chaves", "valores", "itens", "mudar", "extender"]:
 				# Create the built-in function and attach the dictionary
 				if attr_name == "chaves": attr_name = "keys"
 				elif attr_name == "valores": attr_name = "values"
@@ -2623,15 +2799,39 @@ class Interpreter:
 						return res.success(value.copy())
 				return res.failure(RTError(
 					node.pos_start, node.pos_end,
-					f"Key '{attr_name}' not found",
+					f"Chave '{attr_name}' não encontrada.",	
 					context
 				))
-		else:
-			return res.failure(RTError(
-				node.pos_start, node.pos_end,
-				"Attribute access only supported for dictionaries",
-				context
-			))
+		elif isinstance(obj, List):
+			if attr_name in ["invertida", "procurar", "colocar", "estourar", "extender", "mudar"]:
+				func = BuiltInFunction(f"list_{attr_name}")
+				func.obj = obj  # Attach the list instance
+				func.set_context(context)
+				return res.success(func)
+			else:
+				return res.failure(RTError(
+					node.pos_start, node.pos_end,
+					f"Atributo '{attr_name}' para listas não encontrado, talvez tenha confudido com os métodos de dicionários?",
+					context
+				))
+		elif isinstance(obj, String):
+			if attr_name in ["fatiar", "picotar", "limpar"]:
+				func = BuiltInFunction(f"string_{attr_name}")
+				func.obj = obj  # Attach the string instance
+				func.set_context(context)
+				return res.success(func)
+			else:
+				return res.failure(RTError(
+					node.pos_start, node.pos_end,
+					f"Atributo '{attr_name}' para strings não encontrado, talvez tenha confudido com os métodos de dicionários?",
+					context
+				))
+
+		return res.failure(RTError(
+			node.pos_start, node.pos_end,
+			"Attribute access only supported for dictionaries",
+			context
+		))
 	
 	def visit_ArrayAccessNode(self, node, context):
 		res = RTResult()
@@ -2647,19 +2847,39 @@ class Interpreter:
 		# Handle list access
 		if isinstance(obj, List):
 			try:
-				return res.success(obj.elements[int(index.value)])
+				value = (obj.elements[int(index.value)])
+
+				if isinstance(value, str):
+					return res.success(String(value).set_context(context).set_pos(node.pos_start, node.pos_end))
+				elif isinstance(value, int) or isinstance(value, float):
+					return res.success(Number(value).set_context(context).set_pos(node.pos_start, node.pos_end))
+				elif isinstance(value, list):
+					for i in value:
+						if len(i) < 2:
+							return res.success(List(value).set_context(context).set_pos(node.pos_start, node.pos_end))
+						else:
+							return res.success(Dict(value).set_context(context).set_pos(node.pos_start, node.pos_end))
+				else:
+					return res.success(value.copy())
 			except:
 				return res.failure(RTError(
 					node.pos_start, node.pos_end,
 					f"Index {index} out of range",
 					context
 				))
-		
-		# Handle other indexable types if needed
+		elif isinstance(obj, Dict):
+			for k, v in obj.elements:
+				if k.value == index.value:
+					return res.success(v.copy())
+			return res.failure(RTError(
+				node.pos_start, node.pos_end,
+				f"Key '{index}' not found",
+				context
+			))
 		
 		return res.failure(RTError(
 			node.pos_start, node.pos_end,
-			"[] access only supported for lists",
+			"Acesso usando [index] somente disponível para listas",
 			context
 		))
 	

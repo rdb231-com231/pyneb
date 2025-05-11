@@ -2,7 +2,11 @@ import sys
 import os
 import pyneb
 
-if not sys.argv[1]:
+try:
+    if not sys.argv[1]:
+        print("Please provide a file name as an argument.")
+        sys.exit(1)
+except IndexError:
     print("Please provide a file name as an argument.")
     sys.exit(1)
 
@@ -24,6 +28,39 @@ while True:
 
         if error: print(error.as_string())
         elif result: print(repr(result))
+    
+    elif sys.argv[1] == 'setmain':
+        with open('.config', 'w', encoding='utf-8') as f:
+            if not sys.argv[2].endswith('.neb'):
+                sys.argv[2] += '.neb'
+            if not sys.argv[2].startswith('../'):
+                sys.argv[2] = '../' + sys.argv[2]
+            f.write(f"access_point_main={sys.argv[2]};")
+            f.write(f"\nversion={pyneb.DEFAULT_CONFIG['version']};")
+        break
+    
+    elif sys.argv[1] == '.':
+        with open('.config', 'r', encoding='utf-8') as f:
+            for i in f.read().split(';'):
+                if i.startswith('access_point_main'):
+                    filename = i.split('=')[1]
+        if not filename.endswith('.neb'):
+            filename += '.neb'
+        if not filename.startswith('../'):
+            filename = '../' + filename
+        
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                text = f.read()
+                if not text: print("Arquivo vazio, favor adicionar algum código."); break
+                _, error, ctx = pyneb.run(filename, text)
+                if error: 
+                    print(error.as_string())
+                    break
+                else: break
+        except FileNotFoundError:
+            print(f"File {filename} not found. Please use command: \"nebula <filename>\"")
+            break
     
     elif sys.argv[1] == '.config':
         print(pyneb.DEFAULT_CONFIG)
