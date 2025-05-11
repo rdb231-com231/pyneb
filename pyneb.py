@@ -1441,7 +1441,7 @@ class Parser:
 
 			if not self.current_tok.matches(TT_KEYWORD, 'fim'):
 				return res.failure(InvalidSyntaxError(
-					self.current_tok.pos_start, self.pos_end,
+					self.current_tok.pos_start, self.current_tok.pos_end,
 					"Esperava-se 'fim'"
 				))
 
@@ -2492,7 +2492,7 @@ class BuiltInFunction(BaseFunction):
 		conteúdo = exec_ctx.symbol_table.get('conteúdo').value
 		try:
 			with open(caminho, 'w', encoding='utf-8') as f:
-				f.write(conteúdo)
+				f.write(str(conteúdo))
 			return RTResult().success(Number.true)
 		except Exception as e:
 			return RTResult().failure(RTError(
