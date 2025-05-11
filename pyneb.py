@@ -10,6 +10,7 @@ import unicodedata
 import os
 import random
 import subprocess
+from typing import Literal
 
 #######################################
 # CONSTANTS
@@ -23,7 +24,7 @@ FILENAME = ''
 ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.neb')]
 
 DEFAULT_CONFIG = {
-	'version': "1.3.2",
+	'version': "1.3.4",
 	'author': 'mewplush',
 	'publisher': 'mewplush',
 	'interpreter': 'pyneb',
@@ -79,7 +80,7 @@ class InvalidSyntaxError(Error):
 
 class CheckError(Error):
 	def __init__(self, pos_start, pos_end, details):
-		super().__init__(pos_start, pos_end, 'Error Conferindo Informações', details)
+		super().__init__(pos_start, pos_end, 'Erro Conferindo Informações', details)
 
 class RTError(Error):
 	def __init__(self, pos_start, pos_end, details, context):
@@ -198,7 +199,9 @@ KEYWORDS = [
 	'levantar',
 	'detalhes',
 	'importar',
-	'de'
+	'de',
+	'verdadeiro',
+	'falso'
 ]
 
 class Token:
@@ -474,6 +477,9 @@ class FuncDefNode:
 			self.pos_start = self.body_node.pos_start
 		
 		self.pos_end = self.body_node.pos_end
+	
+	def __repr__(self):
+		return f'FuncDefNode({self.var_name_tok}, {self.arg_name_toks}, {self.body_node}, {self.should_auto_return})'
 
 class CallNode:
 	def __init__(self, node_to_call, arg_nodes):
@@ -486,6 +492,9 @@ class CallNode:
 			self.pos_end = self.arg_nodes[len(self.arg_nodes) - 1].pos_end
 		else:
 			self.pos_end = self.node_to_call.pos_end
+	
+	def __repr__(self):
+		return f'{repr(self.node_to_call)}({[repr(arg) for arg in self.arg_nodes]})'
 
 class NumberNode:
 	def __init__(self, tok):
@@ -497,6 +506,16 @@ class NumberNode:
 	def __repr__(self):
 		
 		return f'{self.tok}'
+
+class BoolNode:
+	def __init__(self, tok):
+		self.tok = tok
+
+		self.pos_start = self.tok.pos_start
+		self.pos_end = self.tok.pos_end
+	
+	def __repr__(self):
+		return f'\'{self.tok}\''
 
 class StringNode:
 	def __init__(self, tok):
@@ -526,6 +545,9 @@ class ListNode:
 		self.pos_start = pos_start if pos_start else self.element_nodes.pos_start
 		self.pos_end = pos_end if pos_end else self.element_nodes.pos_end
 
+	def __repr__(self):
+			return f'[{", ".join([repr(x) for x in self.element_nodes])}]'
+
 class DictNode:
 	def __init__(self, pairs, pos_start=None, pos_end=None):
 		self.pairs = pairs
@@ -533,12 +555,18 @@ class DictNode:
 		self.pos_start = pos_start if pos_start else self.pairs[0].pos_start
 		self.pos_end = pos_end if pos_end else self.pairs[len(self.pairs) - 1].pos_end
 
+	def __repr__(self):
+		return f'{{{", ".join([f"{str(k.value)}: {repr(v.copy())}" for k, v in self.pairs])}}}'
+
 class AttrAccessNode:
 	def __init__(self, obj_node, attr_name_tok):
 		self.obj_node = obj_node
 		self.attr_name_tok = attr_name_tok
 		self.pos_start = obj_node.pos_start
 		self.pos_end = attr_name_tok.pos_end
+	
+	def __repr__(self):
+		return f'{self.obj_node}.{self.attr_name_tok}'
 
 class ArrayAccessNode:
 	def __init__(self, obj_node, index_node):
@@ -546,6 +574,9 @@ class ArrayAccessNode:
 		self.index_node = index_node
 		self.pos_start = obj_node.pos_start
 		self.pos_end = index_node.pos_end
+	
+	def __repr__(self):
+		return f'{self.obj_node}[{self.index_node}]'
 
 class IfNode:
 	def __init__(self, cases, else_case):
@@ -569,6 +600,9 @@ class ForNode:
 
 		self.pos_start = self.var_name_tok.pos_start
 		self.pos_end = self.body_node.pos_end
+	
+	def __repr__(self):
+		return f'ForNode({self.var_name_tok}, {self.start_value_node}, {self.end_value_node}, {self.step_value_node}, {self.body_node}, {self.should_return_null})'
 
 class WhileNode:
 	def __init__(self, condition_node, body_node, should_return_null):
@@ -578,10 +612,9 @@ class WhileNode:
 
 		self.pos_start = self.condition_node.pos_start
 		self.pos_end = self.body_node.pos_end
-
-
-
-
+	
+	def __repr__(self):
+		return f'WhileNode({self.condition_node}, {self.body_node}, {self.should_return_null})'
 
 class VarAccessNode:
 	def __init__(self, var_name_tok):
@@ -589,6 +622,9 @@ class VarAccessNode:
 
 		self.pos_start = self.var_name_tok.pos_start
 		self.pos_end = self.var_name_tok.pos_end
+	
+	def __repr__(self):
+		return f'VarAccessNode({self.var_name_tok})'
 
 class VarAssignNode:
 	def __init__(self, var_name_tok, value_node, constant=False, change_value=False):
@@ -601,7 +637,10 @@ class VarAssignNode:
 			self.var_name_toks = [var_name_tok]
 
 		self.pos_start = self.var_name_toks[0].pos_start
-		self.pos_end = self.value_node.pos_end if self.value_node else self.var_name_tok.pos_end
+		self.pos_end = self.value_node.pos_end if self.value_node else self.var_name_toks[-1].pos_end
+
+	def __repr__(self):
+		return f'VarAssignNode({self.var_name_toks}, {self.value_node})'
 
 class BinOpNode:
 	def __init__(self, left_node, op_tok, right_node):
@@ -610,7 +649,7 @@ class BinOpNode:
 		self.right_node = right_node
 
 		self.pos_start = self.left_node.pos_start
-		self.pos_end = self.right_node.pos_end
+		self.pos_end = self.right_node.pos_end if self.right_node else self.left_node.pos_end
 
 	def __repr__(self):
 		return f'({self.left_node}, {self.op_tok}, {self.right_node})'
@@ -632,16 +671,25 @@ class ReturnNode:
 		
 		self.pos_start = pos_start
 		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f'ReturnNode({self.node_to_return})'
 
 class ContinueNode:
 	def __init__(self, pos_start, pos_end):
 		self.pos_start = pos_start
 		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f'ContinueNode()'
 
 class BreakNode:
 	def __init__(self, pos_start, pos_end):
 		self.pos_start = pos_start
 		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f'BreakNode()'
 
 class CheckNode:
 	def __init__(self, condition, error_to_raise, details, pos_start, pos_end):
@@ -651,6 +699,9 @@ class CheckNode:
 		
 		self.pos_start = pos_start
 		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f'CheckNode({self.condition_node}, {self.error_name}, {self.details})'
 
 class RaiseNode:
 	def __init__(self, error_name, details, pos_start, pos_end):
@@ -659,6 +710,9 @@ class RaiseNode:
 		
 		self.pos_start = pos_start
 		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f'RaiseNode({self.error_name}, {self.details})'
 
 class ImportNode:
 	def __init__(self, file_path, functions, pos_start, pos_end):
@@ -667,6 +721,9 @@ class ImportNode:
 		
 		self.pos_start = pos_start
 		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f'ImportNode({self.file_path}, {self.functions})'
 
 #######################################
 # PARSE RESULT
@@ -812,27 +869,20 @@ class Parser:
 			condition = res.register(self.expr())
 			if res.error: return res
 
-			if not self.current_tok.matches(TT_KEYWORD, 'usando'):
-				return res.failure(InvalidSyntaxError(
-					self.current_tok.pos_start, self.current_tok.pos_end,
-					"Esperava-se 'usando'"
-				))
+			error_to_raise = None
+			details = None
 
-			self.advance(res)
+			if self.current_tok.matches(TT_KEYWORD, 'usando'):
+				self.advance(res)
 
-			error_to_raise = res.register(self.expr())
-			if res.error: return res
+				error_to_raise = res.register(self.expr())
+				if res.error: return res
 
-			if not self.current_tok.matches(TT_KEYWORD, 'detalhes'):
-				return res.failure(InvalidSyntaxError(
-					self.current_tok.pos_start, self.current_tok.pos_end,
-					"Esperava-se 'detalhes'"
-				))
+			if self.current_tok.matches(TT_KEYWORD, 'detalhes'):
+				self.advance(res)
 
-			self.advance(res)
-
-			details = res.register(self.expr())
-			if res.error: return res
+				details = res.register(self.expr())
+				if res.error: return res
 
 			return res.success(CheckNode(condition, error_to_raise, details, pos_start, self.current_tok.pos_start.copy()))
 		
@@ -1031,6 +1081,10 @@ class Parser:
 			res.register_advancement()
 			self.advance()
 			return res.success(NumberNode(tok))
+
+		elif self.current_tok.matches(TT_KEYWORD, 'verdadeiro') or self.current_tok.matches(TT_KEYWORD, 'falso'):
+			self.advance(res)
+			return res.success(BoolNode(tok))
 		
 		elif tok.type == TT_STRING:
 			parts = []
@@ -1829,46 +1883,51 @@ class Number(Value):
 	def powed_by(self, other):
 		if isinstance(other, Number):
 			return Number(self.value ** other.value).set_context(self.context), None
-	
+		return super().get_comparison_gt(other)
+
 	def get_comparison_eq(self, other):
 		if isinstance(other, Number):
-			return Number(int(self.value == other.value)).set_context(self.context), None
+			return Boolean(int(self.value == other.value)).set_context(self.context), None
 		else:
-			return Number(0).set_context(self.context), None
+			return Boolean(0).set_context(self.context), None
 	
 	def get_comparison_ne(self, other):
 		if isinstance(other, Number):
-			return Number(int(self.value != other.value)).set_context(self.context), None
+			return Boolean(int(self.value != other.value)).set_context(self.context), None
 		else:
-			return Number(1).set_context(self.context), None
+			return Boolean(1).set_context(self.context), None
 	
 	def get_comparison_lt(self, other):
 		if isinstance(other, Number):
-			return Number(int(self.value < other.value)).set_context(self.context), None
-	
+			return Boolean(int(self.value < other.value)).set_context(self.context), None
+		return super().get_comparison_gt(other)
+
 	def get_comparison_lte(self, other):
 		if isinstance(other, Number):
-			return Number(int(self.value <= other.value)).set_context(self.context), None
-	
+			return Boolean(int(self.value <= other.value)).set_context(self.context), None
+		return super().get_comparison_gt(other)
+
 	def get_comparison_gt(self, other):
 		if isinstance(other, Number):
-			return Number(int(self.value > other.value)).set_context(self.context), None
+			return Boolean(int(self.value > other.value)).set_context(self.context), None
+		return super().get_comparison_gt(other)
 	
 	def get_comparison_gte(self, other):
 		if isinstance(other, Number):
-			return Number(int(self.value >= other.value)).set_context(self.context), None
+			return Boolean(int(self.value >= other.value)).set_context(self.context), None
+		return super().get_comparison_gt(other)
+
 	def anded_by(self, other):
-		if isinstance(other, Number):
-			return Number(int(self.is_true() and other.is_true())).set_context(self.context), None
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context), None
+	
 	def ored_by(self, other):
-		if isinstance(other, Number):
-			return Number(int(self.is_true() or other.is_true())).set_context(self.context), None
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context), None
 	
 	def notted(self):
-		return Number(int(0 if self.is_true() else 1)).set_context(self.context), None
-
+		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
+	
 	def is_true(self):
-		return int(True if self.value > 0 else False)
+		return (int(True if self.value > 0 else False))
 	
 	def copy(self):
 		copy = Number(self.value)
@@ -1877,12 +1936,91 @@ class Number(Value):
 		return copy
 	
 	def __repr__(self):
+		return f"'{str(self.value)}'"
+
+	def __str__(self):
 		return str(self.value)
 
+class Boolean(Value):
+	def __init__(self, value: Literal["verdadeiro", "falso", 1, 0]):
+		self.value = value
 
-Number.true = Number(1)
-Number.false = Number(0)
-Number.null = Number(0)
+		if self.value == 1: self.value = 'verdadeiro'
+		elif self.value == 0: self.value = 'falso'
+
+		self.set_pos()
+		self.set_context()
+	
+	def copy(self):
+		copy = Boolean(self.value)
+		copy.set_pos(self.pos_start, self.pos_end)
+		copy.set_context(self.context)
+		return copy
+
+	def get_comparison_eq(self, other):
+		return Boolean(int(self.is_true() == other.is_true())).set_context(self.context), None
+	
+	def get_comparison_ne(self, other):
+		return Boolean(int(self.is_true() != other.is_true())).set_context(self.context), None
+	
+	def ored_by(self, other):
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context), None
+	
+	def anded_by(self, other):
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context), None
+	
+	def notted(self):
+		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
+
+	def is_true(self):
+		return 1 if self.value == 'verdadeiro' else 0
+	
+	def __repr__(self):
+		return f"Boolean({str(self.value)})"
+	
+	def __str__(self):
+		return str(self.value)
+
+class Nulo(Value):
+	def __init__(self):
+		self.value = None
+		super().__init__()
+	
+	def copy(self):
+		copy = Nulo()
+		copy.set_pos(self.pos_start, self.pos_end)
+		copy.set_context(self.context)
+		return copy
+	
+	def is_true(self):
+		return False
+	
+	def get_comparison_eq(self, other):
+		return Boolean(int(self.is_true() == other.is_true())).set_context(self.context), None
+	
+	def get_comparison_ne(self, other):
+		return Boolean(int(self.is_true() != other.is_true())).set_context(self.context), None
+	
+	def ored_by(self, other):
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context), None
+	
+	def anded_by(self, other):
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context), None
+	
+	def notted(self):
+		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
+	
+	
+	def __repr__(self):
+		return "Nulo(null)"
+	
+	def __str__(self):
+		return "nulo"
+
+
+Number.true = Boolean(1)
+Number.false = Boolean(0)
+Number.null = Nulo()
 
 class String(Value):
 	def __init__(self, value):
@@ -1919,22 +2057,22 @@ class String(Value):
 		return None, self.illegal_operation(other)
 	
 	def notted(self):
-		return Number(int(0 if self.is_true() else 1)).set_context(self.context), None
+		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
 	
 	def anded_by(self, other):
-		return Number(int(self.is_true() and other.is_true())).set_context(self.context), None
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context), None
 	
 	def ored_by(self, other):
-		return Number(int(self.is_true() or other.is_true())).set_context(self.context), None
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context), None
 
 	def get_comparison_eq(self, other):
 		if isinstance(other, String):
-			return Number(int(self.value == other.value)).set_context(self.context), None
+			return Boolean(int(self.value == other.value)).set_context(self.context), None
 		return Number.false, None
 	
 	def get_comparison_ne(self, other):
 		if isinstance(other, String):
-			return Number(int(self.value != other.value)).set_context(self.context), None
+			return Boolean(int(self.value != other.value)).set_context(self.context), None
 		return Number.true, None
 		
 	def copy(self):
@@ -1971,22 +2109,22 @@ class List(Value):
 	
 	def get_comparison_eq(self, other):
 		if isinstance(other, List):
-			return Number(int(self.elements == other.elements)).set_context(self.context), None
+			return Boolean(int(self.elements == other.elements)).set_context(self.context), None
 		return Number.false, None
 	
 	def get_comparison_ne(self, other):
 		if isinstance(other, List):
-			return Number(int(self.elements != other.elements)).set_context(self.context), None
+			return Boolean(int(self.elements != other.elements)).set_context(self.context), None
 		return Number.true, None
 	
 	def notted(self):
-		return Number(int(0 if self.is_true() else 1)).set_context(self.context), None
+		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
 	
 	def anded_by(self, other):
-		return Number(int(self.is_true() and other.is_true())).set_context(self.context), None
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context), None
 	
 	def _ored_by(self, other):
-		return Number(int(self.is_true() or other.is_true())).set_context(self.context), None
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context), None
 	
 	def is_true(self):
 		return len(self.elements) > 0
@@ -2005,7 +2143,7 @@ class List(Value):
 class Dict(Value):
 	def __init__(self, elements):
 		super().__init__()
-		self.elements = elements  # List of (key, value) tuples
+		self.elements = elements  # [(k, v)...]
 		
 	def added_to(self, other):
 		if isinstance(other, Dict):
@@ -2040,7 +2178,7 @@ class Dict(Value):
 		return List([String(k.value) if isinstance(k.value, str) else Number(k.value) for k, v in self.elements])
 	
 	def values(self):
-		return List([Number(v.value) if isinstance(v.value, int) else String(v.value) for k, v in self.elements])
+		return List([v.copy() for k, v in self.elements])
 	
 	def items(self):
 		return List([self.values(), self.keys()])
@@ -2358,6 +2496,10 @@ class BuiltInFunction(BaseFunction):
 			return RTResult().success(String('função'))
 		elif isinstance(exec_ctx.symbol_table.get('value'), Dict):
 			return RTResult().success(String('dicionário'))
+		elif isinstance(exec_ctx.symbol_table.get('value'), Boolean):
+			return RTResult().success(String(String(exec_ctx.symbol_table.get('value').value)))
+		elif isinstance(exec_ctx.symbol_table.get('value'), (Nulo, None)):
+			return RTResult().success(String('nulo'))
 		else:
 			return RTResult().success(Number.null)
 
@@ -2666,9 +2808,17 @@ class SymbolTable:
 
 	def set(self, name, value, constant=False):
 		if name in self.constants:
-			raise Exception(f"'{name}' é uma constante e não pode ser alterada")
+			return 'error'
+		if self.parent and name in self.parent.constants:
+			return 'error'
+		
 		self.symbols[name] = value
 		if constant: self.constants.append(name)
+	
+	def is_constant(self, name):
+		val = name in self.constants
+		if self.parent: val = val or self.parent.is_constant(name)
+		return val
 
 	def remove(self, name):
 		del self.symbols[name]
@@ -2694,8 +2844,14 @@ class Interpreter:
 		)
 	
 	def visit_StringNode(self, node, context):
+		
 		return RTResult().success(
 			String(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
+		)
+	
+	def visit_BoolNode(self, node, context):
+		return RTResult().success(
+			Boolean(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
 		)
 	
 	def visit_FStringNode(self, node, context):
@@ -2732,7 +2888,7 @@ class Interpreter:
 	def visit_VarAssignNode(self, node, context):
 		res = RTResult()
 	
-		value = res.register(self.visit(node.value_node, context))
+		value = res.register(self.visit(node.value_node, context)) if node.value_node else Nulo().set_context(context).set_pos(node.pos_start, node.pos_end)
 		if res.should_return(): return res
 		
 		if len(node.var_name_toks) > 1:
@@ -2744,10 +2900,21 @@ class Interpreter:
 				))
 				
 			for var_tok, element in zip(node.var_name_toks, value.elements):
-				context.symbol_table.set(var_tok.value, element.copy(), node.constant)
+				value = context.symbol_table.set(var_tok.value, element.copy(), node.constant)
+				if value == 'error':
+					return res.failure(RTError(
+						node.pos_start, node.pos_end,
+						f"'{var_tok.value}' não pode ser alterado, já que é uma constante.",
+						context
+					))
 		else:
-			context.symbol_table.set(node.var_name_toks[0].value, value, node.constant)
-			
+			value = context.symbol_table.set(node.var_name_toks[0].value, value, node.constant)
+			if value == 'error':
+					return res.failure(RTError(
+						node.pos_start, node.pos_end,
+						f"'{node.var_name_toks[0].value}' não pode ser alterado, já que é uma constante.",
+						context
+					))
 		return res.success(value)
 	
 	def visit_ListNode(self, node, context):
@@ -2894,12 +3061,15 @@ class Interpreter:
 		if condition.is_true():
 			return res.success(Number(1).set_context(context).set_pos(node.pos_start, node.pos_end))
 		else:
-			error_name = res.register(self.visit(node.error_name, context))
-			details = res.register(self.visit(node.details, context))
+			error_name = res.register(self.visit(node.error_name, context)) if node.error_name else None
+			details = res.register(self.visit(node.details, context)) if node.details else "Expressão Conferir resultou em Falso."
 
 			return res.failure(Error(
 				node.pos_start, node.pos_end,
-				repr(error_name), repr(details)
+				str(error_name), repr(details)
+			)) if node.error_name else res.failure(CheckError(
+				node.pos_start, node.pos_end,
+				repr(details)
 			))
 	
 	def visit_RaiseNode(self, node, context):
@@ -2955,13 +3125,14 @@ class Interpreter:
 		for func_tok in node.functions:
 			func_name = func_tok.value
 			func_value = module_ctx.symbol_table.get(func_name)
+			func_const = module_ctx.symbol_table.is_constant(func_name)
 			if not func_value:
 				return res.failure(RTError(
 					node.pos_start, node.pos_end,
 					f"Function '{func_name}' not found in module '{module_name}'",
 					context
 				))
-			context.symbol_table.set(func_name, func_value)
+			context.symbol_table.set(func_name, func_value, func_const)
 		
 		return res.success(Number.null)
 
@@ -3155,8 +3326,6 @@ class Interpreter:
 
 global_symbol_table = SymbolTable()
 global_symbol_table.set("nulo", Number.null, True)
-global_symbol_table.set("verdadeiro", Number.true, True)
-global_symbol_table.set("falso", Number.false, True)
 global_symbol_table.set("falar", BuiltInFunction("falar"), True)
 global_symbol_table.set("pegar", BuiltInFunction("pegar"), True)
 global_symbol_table.set("perguntar", BuiltInFunction("perguntar"), True)
@@ -3200,7 +3369,6 @@ def run(fn, text):
 	parser = Parser(tokens)
 	ast = parser.parse()
 	if ast.error: return None, ast.error, None
-
 	# Run program
 	interpreter = Interpreter()
 	context = Context('<program>')

@@ -11,3 +11,5 @@ função fatorial usando(n)
     fim
     retornar resultado
 fim
+
+declarar constante pi = 3,141592653589793
