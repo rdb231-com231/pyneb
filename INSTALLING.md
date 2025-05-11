@@ -1,11 +1,11 @@
 # Instalando PyNeb
 
-- [Download PyNeb Orion 1.0.0](https://github.com/rdb231-com231/pyneb/releases/tag/orion-1.0.0-alpha)
+- [Download PyNeb Orion 1.3.2](https://github.com/rdb231-com231/pyneb/releases/tag/orion-1.0.0-alpha)
 
 - [Extensão Download VSNeb](https://github.com/rdb231-com231/vsnebula/releases/tag/Base)
 
-## PyNeb Orion 1.0.0
-Vá para o **Download PyNeb Orion 1.0.0** e baixe o `Source Code`/Código Fonte disponibilizado. Crie uma pasta chamada `NebulaTests` (ou qualquer nome que quiser) para que possa colocar o `.zip` extraido **dentro**.
+## PyNeb Orion 1.3.2
+Vá para o **Download PyNeb Orion 1.3.2** e baixe o `Source Code`/Código Fonte disponibilizado. Crie uma pasta chamada `NebulaTests` (ou qualquer nome que quiser) para que possa colocar o `.zip` extraido **dentro**.
 
 > Isso permitira que criemos códigos `Nebula` e possamos usar seu Interpretador ser muito esforço.
 
@@ -27,7 +27,7 @@ nebula .version
 ```
 > Caso esteja usando Powershell, use: `./nebula .version`, isso acontece pois o PowerShell bloqueia comandos externos ***`.bat`*** por configuração de fábrica.
 
-Se isso mostrar uma versão como **`1.0.0`**, sua instalação ocorreu corretamente. Podemos agora usar `PyNeb`.
+Se isso mostrar uma versão como **`1.3.2`**, sua instalação ocorreu corretamente. Podemos agora usar `PyNeb`.
 
 Escreva em seu arquivo `teste.neb`.
 
@@ -44,4 +44,4 @@ Divirta-se escrevendo códigos `PyNeb!`
 
 > Autor: MewPlush
 
-> Versão: 1.0.0
+> Versão: 1.3.2.

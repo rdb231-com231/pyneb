@@ -37,6 +37,8 @@ DEFAULT_CONFIG = {
 		'.config': 'Configuração do PyNeb',
 		'__path__': 'Caminho do arquivo',
 		'.version': 'Versão do PyNeb',
+		'setmain <filename>': 'Define o arquivo principal',
+		'.': 'Executar arquivo principal'
 	}
 }
 DEFAULT_CONFIG['special-keys'].update({key: value for key, value in DEFAULT_CONFIG.items()})
