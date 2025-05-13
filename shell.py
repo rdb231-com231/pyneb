@@ -26,8 +26,13 @@ while True:
 
         result, error, ctx = pyneb.run('<stdin>', text)
 
-        if error: print(error.as_string())
-        elif result: print(repr(result))
+        if error:
+            try: 
+                print(error.as_string())
+            except AttributeError:
+                print(error.details)
+        
+        if result: print(repr(result))
     
     elif sys.argv[1] == 'setmain':
         with open('.config', 'w', encoding='utf-8') as f:
@@ -70,8 +75,10 @@ while True:
                 if not text: print("Arquivo vazio, favor adicionar algum código."); break
                 _, error, ctx = pyneb.run(filename, text)
                 if error: 
-                    print(error.as_string())
-                    break
+                    try: 
+                        print(error.as_string())
+                    except AttributeError:
+                        print(error.details)
                 else: break
         except FileNotFoundError:
             print(f"File {filename} not found. Please use command: \"nebula <filename>\"")
@@ -112,10 +119,15 @@ while True:
                 text = f.read()
                 if not text: print("Arquivo vazio, favor adicionar algum código."); break
                 _, error, ctx = pyneb.run(sys.argv[1], text)
-                if error: 
-                    print(error.as_string())
+                if error:
+                    try: 
+                        print(error.as_string())
+                    except AttributeError:
+                        print(error.details)
                     break
                 else: break
         except FileNotFoundError:
             print(f"File {sys.argv[1]} not found. Please use command: \"nebula <filename>\"")
             break
+    
+    break

@@ -11,6 +11,7 @@ import os
 import random
 import subprocess
 from typing import Literal
+import time
 
 #######################################
 # CONSTANTS
@@ -67,7 +68,7 @@ class Error:
 	def as_string(self):
 		result  = f'{self.error_name}: {self.details}\n'
 		result += f'File {self.pos_start.fn}, line {self.pos_start.ln + 1}'
-		result += '\n\n' + string_with_arrows(self.pos_start.ftxt, self.pos_start, self.pos_end)
+		result += '\n\n' + string_with_arrows(self.pos_start.ftxt if self.pos_start else None, self.pos_start, self.pos_end)
 		return result
 
 class IllegalCharError(Error):
@@ -90,8 +91,8 @@ class RTError(Error):
 	def as_string(self):
 		result  = self.generate_traceback()
 		result += f'{self.error_name}: {self.details}'
-		result += '\n\n' + string_with_arrows(self.pos_start.ftxt, self.pos_start, self.pos_end)
-		return result
+		result += '\n\n' + string_with_arrows(self.pos_start.ftxt if self.pos_start else None, self.pos_start, self.pos_end)
+		return result + "\n"
 
 	def generate_traceback(self):
 		result = ''
@@ -103,7 +104,7 @@ class RTError(Error):
 			pos = ctx.parent_entry_pos
 			ctx = ctx.parent
 
-		return 'Traceback (most recent call last):\n' + result
+		return '\nErro Encontrado (Chamada mais recente):\n' + result + ""
 
 #######################################
 # POSITION
@@ -557,6 +558,17 @@ class DictNode:
 
 	def __repr__(self):
 		return f'{{{", ".join([f"{str(k.value)}: {repr(v.copy())}" for k, v in self.pairs])}}}'
+
+class SetNode:
+	def __init__(self, elements, pos_start=None, pos_end=None):
+		self.elements = elements
+
+		self.pos_start = pos_start if pos_start else self.elements[0].pos_start
+		self.pos_end = pos_end if pos_end else self.elements[-1].pos_end
+	
+	def __repr__(self):
+		self.reprs = [", ".join(self.elements)]
+		return "{" + self.reprs + "}"
 
 class AttrAccessNode:
 	def __init__(self, obj_node, attr_name_tok):
@@ -1102,6 +1114,7 @@ class Parser:
 			
 			self.advance(res)
 			return res.success(FStringNode(parts, pos_start, tok.pos_end))
+		
 		elif tok.type == TT_LBRACE:
 			dict_expr = res.register(self.dict_expr())
 			if res.error: return res
@@ -1144,6 +1157,7 @@ class Parser:
 		elif tok.type == TT_LPAREN:
 			res.register_advancement()
 			self.advance()
+
 			expr = res.register(self.expr())
 			if res.error: return res
 			if self.current_tok.type == TT_RPAREN:
@@ -1217,6 +1231,42 @@ class Parser:
 			self.advance()
 			return res.success(ListNode(element_nodes, pos_start, self.current_tok.pos_end.copy()))
 	
+	def set_expr(self):
+		res = ParseResult()
+		elements = []
+		pos_start = self.current_tok.pos_start.copy()
+
+		while True:
+			if self.current_tok.type == TT_NEWLINE:
+				self.advance(res)
+			
+			if self.current_tok.type == TT_RBRACE:
+				return res.failure(InvalidSyntaxError(
+					pos_start, self.current_tok.pos_end.copy(),
+					"Não se pode ter uma Mesa vazia, esperava-se elemento (depois de ',' ou '{')\nSe está tentando criar um dicionário, faltou um identificador."
+				))
+			
+			expr = res.register(self.expr())
+			if res.error: return res
+			elements.append(expr)
+
+			if self.current_tok.type == TT_COMMA:
+				self.advance(res)
+				continue
+
+			if self.current_tok.type == TT_NEWLINE:
+				self.advance(res)
+
+			if not self.current_tok.type == TT_RBRACE:
+				return res.failure(InvalidSyntaxError(
+					pos_start, self.current_tok.pos_end.copy(),
+					"Esperava-se um '}' após fim de Mesa."
+				))
+			
+			self.advance(res)
+
+			return res.success(SetNode(elements, pos_start, self.current_tok.pos_end.copy()))
+	
 	def dict_expr(self):
 		res = ParseResult()
 		pairs = []
@@ -1238,10 +1288,10 @@ class Parser:
 				self.advance(res)
 
 			if not self.current_tok.type == TT_IDENTIFIER:
-				return res.failure(InvalidSyntaxError(
-					self.current_tok.pos_start, self.current_tok.pos_end,
-					"Esperava-se um identificador"
-				))
+				set_expr = res.register(self.set_expr())
+				if res.error: return res
+				return res.success(set_expr)
+			
 			key = self.current_tok
 			if res.error: return res
 
@@ -1837,7 +1887,7 @@ class Value:
 		if not other: other = self
 		return RTError(
 			self.pos_start, other.pos_end,
-			'Operação Ilegal',
+			f'Operação Ilegal entre {self} e {other}',
 			self.context
 		)
 
@@ -1874,7 +1924,7 @@ class Number(Value):
 			if other.value == 0:
 				return None, RTError(
 					other.pos_start, other.pos_end,
-					'Division by zero',
+					f'Divisão por zero ({other}) não pode ser aceita',
 					self.context
 				)
 
@@ -2016,6 +2066,45 @@ class Nulo(Value):
 	
 	def __str__(self):
 		return "nulo"
+
+class Set(Value):
+	def __init__(self, elements):
+		super().__init__()
+		self.elements = elements
+	
+	def copy(self):
+		copy = Set(self.elements)
+		copy.set_context(self.context)
+		copy.set_pos(self.pos_start, self.pos_end)
+		return copy
+	
+	def is_true(self):
+		return True
+	
+	def get_comparison_eq(self, other):
+		return Boolean(int(self.elements == other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+	
+	def get_comparison_ne(self, other):
+		return Boolean(int(self.elements != other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+	
+	def get_comparison_eq(self, other):
+		return Boolean(int(self.elements == other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+	
+	def anded_by(self, other):
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+
+	def ored_by(self, other):
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+	
+	def notted(self):
+		return Boolean(int(not self.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+	
+	def __repr__(self):
+		return f'Mesa({", ".join(self.elements)})'
+	
+	def __str__(self):
+		reprs = f'{", ".join([str(x) for x in self.elements])}'
+		return "{" + reprs + "}"
 
 
 Number.true = Boolean(1)
@@ -2410,9 +2499,9 @@ class BuiltInFunction(BaseFunction):
 	def execute_len(self, exec_ctx):
 		val = exec_ctx.symbol_table.get('value')
 		if isinstance(val, List):
-			return RTResult().success(Number(len(val.elements)))
+			return RTResult().success(Number(len(val.elements)).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
 		elif isinstance(val, String):
-			return RTResult().success(Number(len(val.value)))
+			return RTResult().success(Number(len(val.value)).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
 		else:
 			return RTResult().failure(RTError(
 				self.pos_start, self.pos_end,
@@ -2498,8 +2587,10 @@ class BuiltInFunction(BaseFunction):
 			return RTResult().success(String('dicionário'))
 		elif isinstance(exec_ctx.symbol_table.get('value'), Boolean):
 			return RTResult().success(String(String(exec_ctx.symbol_table.get('value').value)))
-		elif isinstance(exec_ctx.symbol_table.get('value'), (Nulo, None)):
+		elif isinstance(exec_ctx.symbol_table.get('value'), Nulo):
 			return RTResult().success(String('nulo'))
+		elif isinstance(exec_ctx.symbol_table.get('value'), (Set)):
+			return RTResult().success(String('mesa'))
 		else:
 			return RTResult().success(Number.null)
 
@@ -2779,6 +2870,20 @@ class BuiltInFunction(BaseFunction):
 		return RTResult().success(Dict(obj.elements).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
 	execute_update.arg_names = ['obj', 'other']
 
+	def execute_esperar(self, exec_ctx):
+		tempo = exec_ctx.symbol_table.get("time")
+		if not isinstance(tempo, Number):
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"Tempo não é um número, mas sim {type(tempo)}",
+				exec_ctx
+			))
+
+		time.sleep(float(tempo.value))
+		return RTResult().success(Number.null)
+
+	execute_esperar.arg_names = ["time"]
+
 #######################################
 # CONTEXT
 #######################################
@@ -2852,6 +2957,18 @@ class Interpreter:
 	def visit_BoolNode(self, node, context):
 		return RTResult().success(
 			Boolean(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
+		)
+	
+	def visit_SetNode(self, node, context):
+		res = RTResult()
+		elements = []
+
+		for item in node.elements:
+			elements.append(res.register(self.visit(item, context)))
+			if res.should_return(): return res
+
+		return res.success(
+			Set(elements).set_context(context).set_pos(node.pos_start, node.pos_end)
 		)
 	
 	def visit_FStringNode(self, node, context):
@@ -3033,7 +3150,7 @@ class Interpreter:
 			except:
 				return res.failure(RTError(
 					node.pos_start, node.pos_end,
-					f"Index {index} out of range",
+					f"Index {index} não existe",
 					context
 				))
 		elif isinstance(obj, Dict):
@@ -3042,9 +3159,31 @@ class Interpreter:
 					return res.success(v.copy())
 			return res.failure(RTError(
 				node.pos_start, node.pos_end,
-				f"Key '{index}' not found",
+				f"Chave '{index}' não encontrada",
 				context
 			))
+		elif isinstance(obj, Set):
+			try:
+				value = (obj.elements[int(index.value)])
+
+				if isinstance(value, str):
+					return res.success(String(value).set_context(context).set_pos(node.pos_start, node.pos_end))
+				elif isinstance(value, int) or isinstance(value, float):
+					return res.success(Number(value).set_context(context).set_pos(node.pos_start, node.pos_end))
+				elif isinstance(value, list):
+					for i in value:
+						if len(i) < 2:
+							return res.success(List(value).set_context(context).set_pos(node.pos_start, node.pos_end))
+						else:
+							return res.success(Dict(value).set_context(context).set_pos(node.pos_start, node.pos_end))
+				else:
+					return res.success(value.copy())
+			except:
+				return res.failure(RTError(
+					node.pos_start, node.pos_end,
+					f"Index {index} não existe",
+					context
+				))
 		
 		return res.failure(RTError(
 			node.pos_start, node.pos_end,
@@ -3354,22 +3493,21 @@ global_symbol_table.set("executar", BuiltInFunction("clicommand"), True)
 global_symbol_table.set("eval", BuiltInFunction("eval"), True)
 global_symbol_table.set("python", BuiltInFunction("python"), True)
 global_symbol_table.set("update", BuiltInFunction("update"), True)
+global_symbol_table.set("esperar", BuiltInFunction("esperar"), True)
 
 def run(fn, text):
 	
 	global FILENAME
-	# Generate tokens
 	lexer = Lexer(fn, text)
 	tokens, error = lexer.make_tokens()
 	if error: return None, error, None
 	
 	FILENAME = lexer.fn
 
-	# Generate AST
 	parser = Parser(tokens)
 	ast = parser.parse()
 	if ast.error: return None, ast.error, None
-	# Run program
+
 	interpreter = Interpreter()
 	context = Context('<program>')
 	context.symbol_table = SymbolTable(global_symbol_table)
