@@ -3,9 +3,8 @@
 função max usando(list)
     conferir type(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
     declarar maior => 0
-    caminhando i = 0 até len(list) faça
-        value = pegar(list, i)
-        conferir type(value) == "número" usando "Argumento Inválido" detalhes "Esperava-se um número, não " + type(value)
+    para cada value em list faça
+        conferir type(value) == "número" detalhes "Esperava-se um número, não ${type(value)} (${value})"
         se value > maior então
             maior = value
         fim
@@ -16,9 +15,8 @@ fim
 função min usando(list)
     conferir type(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
     declarar menor => pegar(list, 0)
-    caminhando i = 0 até len(list) faça
-        value = pegar(list, i)
-        conferir type(value) == "número" usando "Argumento Inválido" detalhes "Esperava-se um número" + type(value)
+    para cada value em list faça
+        conferir type(value) == "número" detalhes "Esperava-se um número, não " + type(value)
         se value < menor então
             menor = value
         fim
@@ -29,8 +27,9 @@ fim
 função soma usando(list)
     conferir type(list) == "lista" usando "Argumento Inválido" detalhes "Esperava-se uma lista, não " + type(list)
     declarar resultado => 0
-    caminhando i = 0 até len(list) faça
-        resultado = resultado + pegar(list, i)
+    para cada item em list faça
+        conferir type(item) == "número"
+        resultado += item
     fim
     retornar resultado
 fim
@@ -38,8 +37,9 @@ fim
 função média usando(list)
     conferir type(list) == "lista" usando "Argumento Inválido" detalhes "Esperava-se uma lista, não " + type(list)
     declarar res => 0
-    caminhando i = 0 até len(list) faça
-        res = res + pegar(list, i)
+    para cada item em list faça
+        conferir type(item) == "número"
+        res += item
     fim
     retornar res / len(list)
 fim

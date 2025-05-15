@@ -3507,11 +3507,12 @@ class SymbolTable:
 		return False
 	
 	def is_constant(self, name):
-		val = name in self.constants
+		val = name in self.constants or None
 		if self.parent: val = val or self.parent.is_constant(name)
 		return val
 
 	def is_private(self, name):
+		val = None
 		if name in self.privates: return True
 		if self.parent: val = val or self.parent.is_private(name)
 		return val
