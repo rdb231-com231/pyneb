@@ -43,3 +43,12 @@ função média usando(list)
     fim
     retornar res / len(list)
 fim
+
+função map usando (fun, list)
+    conferir type(fun) == "função" e type(list) == "lista"
+    nova_lista = []
+    para cada item em list faça
+        nova_lista.colocar(fun(item))
+    fim
+    retornar nova_lista
+fim

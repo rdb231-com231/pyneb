@@ -12,4 +12,4 @@ função fatorial usando(n)
     retornar resultado
 fim
 
-declarar constante pi = 3,141592653589793
+declarar constante pi = 3.141592653589793

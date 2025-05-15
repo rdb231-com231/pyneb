@@ -25,7 +25,7 @@ FILENAME = ''
 ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.neb')]
 
 DEFAULT_CONFIG = {
-	'version': "1.3.4",
+	'version': "1.4.0",
 	'author': 'mewplush',
 	'publisher': 'mewplush',
 	'interpreter': 'pyneb',
@@ -44,15 +44,6 @@ DEFAULT_CONFIG = {
 	}
 }
 DEFAULT_CONFIG['special-keys'].update({key: value for key, value in DEFAULT_CONFIG.items()})
-
-def args(func, *args):
-	def decorator(func):
-		func.arg_names = []
-		for i in args:
-			func.arg_names.append(args)
-		return func
-	return decorator
-
 
 #######################################
 # ERRORS
@@ -168,6 +159,8 @@ TT_RBRACE = 'RBRACE'
 TT_DOT = 'DOT'
 TT_FTEXT = 'FTEXT'
 TT_FEXPR = 'FEXPR'
+TT_PE = 'PE'
+TT_ME = 'ME'
 
 KEYWORDS = [
 	'declarar',
@@ -178,19 +171,20 @@ KEYWORDS = [
 	'ou',
 	'e',
 	'função',
-	'retorne',
 	'não',
 	'se',
 	'então',
 	'senão',
+	'classe',
 	'mas',
 	'enquanto',
 	'caminhando',
 	'até',
+	'para',
+	'cada',
 	'mudando',
 	'faça',
 	'igual',
-	'a',
 	'usando',
 	'fim',
 	'retornar',
@@ -202,11 +196,22 @@ KEYWORDS = [
 	'importar',
 	'de',
 	'verdadeiro',
-	'falso'
+	'falso',
+	'em',
+	'privada',
+	'lista',
+	'tupla',
+	'mesa',
+	'dicionário',
+	'string',
+	'número',
+	'extende',
+	'super'
 ]
 
 class Token:
 	def __init__(self, type_, value=None, pos_start=None, pos_end=None, parts=None):
+		
 		self.type = type_
 		self.value = value
 		self.parts = parts
@@ -263,11 +268,21 @@ class Lexer:
 			elif self.current_char in LETTERS:
 				tokens.append(self.make_identifier())
 			elif self.current_char == '+':
-				tokens.append(Token(TT_PLUS, pos_start=self.pos))
+				pos_start = self.pos.copy()
 				self.advance()
+				if self.current_char == '=':
+					tokens.append(Token(TT_PE, pos_start=pos_start, pos_end=self.pos))
+					self.advance()
+				else:
+					tokens.append(Token(TT_PLUS, pos_start=pos_start, pos_end=self.pos))
 			elif self.current_char == '-':
-				tokens.append(Token(TT_MINUS, pos_start=self.pos))
+				pos_start = self.pos.copy()
 				self.advance()
+				if self.current_char == '=':
+					tokens.append(Token(TT_ME, pos_start=pos_start, pos_end=self.pos))
+					self.advance()
+				else:
+					tokens.append(Token(TT_MINUS, pos_start=pos_start, pos_end=self.pos))
 			elif self.current_char == '*':
 				tokens.append(Token(TT_MUL, pos_start=self.pos))
 				self.advance()
@@ -413,12 +428,17 @@ class Lexer:
 		self.advance()
 		current_text = ""
 		escape_char = False
+		escape_characters = {
+			'n': '\n', 't': '\t', 'r': '\r', 'b': '\b', 'f': '\f',
+			'"': '"', '\\': '\\', '$': '$'
+		}
 		
 		while self.current_char is not None and (self.current_char != '"' or escape_char):
 			full_string += self.current_char
 			if escape_char:
-				current_text += self.handle_escape_char()
+				current_text += escape_characters.get(self.current_char, self.current_char)
 				escape_char = False
+				self.advance()
 			elif self.current_char == "\\":
 				escape_char = True
 				self.advance()
@@ -458,17 +478,17 @@ class Lexer:
 		
 		self.advance()
 		return Token(TT_STRING, ''.join(full_string), pos_start, self.pos, parts=(string_parts, full_string))
-
 #######################################
 # NODES
 #######################################
 
 class FuncDefNode:
-	def __init__(self, var_name_tok, arg_name_toks, body_node, should_auto_return):
+	def __init__(self, var_name_tok, arg_name_toks, body_node, should_auto_return, private=False):
 		self.var_name_tok = var_name_tok
 		self.arg_name_toks = arg_name_toks
 		self.body_node = body_node
 		self.should_auto_return = should_auto_return
+		self.private = private
 
 		if self.var_name_tok:
 			self.pos_start = self.var_name_tok.pos_start
@@ -481,6 +501,25 @@ class FuncDefNode:
 	
 	def __repr__(self):
 		return f'FuncDefNode({self.var_name_tok}, {self.arg_name_toks}, {self.body_node}, {self.should_auto_return})'
+
+class SuperNode:
+    def __init__(self, pos_start, pos_end):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+
+    def __repr__(self):
+        return "super()"
+
+class ClassNode:
+	def __init__(self, class_name_tok, body_node, inheritance):
+		self.class_name_tok = class_name_tok
+		self.body_node = body_node
+		self.inheritance = inheritance
+		self.pos_start = self.class_name_tok.pos_start
+		self.pos_end = self.body_node.pos_end if body_node else class_name_tok.pos_end
+	
+	def __repr__(self):
+		return f'ClassNode({self.class_name_tok}, {self.body_node}, {self.inheritance})'
 
 class CallNode:
 	def __init__(self, node_to_call, arg_nodes):
@@ -549,6 +588,15 @@ class ListNode:
 	def __repr__(self):
 			return f'[{", ".join([repr(x) for x in self.element_nodes])}]'
 
+class TupleNode:
+	def __init__(self, element_nodes, pos_start=None, pos_end=None):
+		self.element_nodes = element_nodes
+		self.pos_start = pos_start
+		self.pos_end = pos_end
+
+	def __repr__(self):
+		return f'({", ".join([repr(x) for x in self.element_nodes])})'
+
 class DictNode:
 	def __init__(self, pairs, pos_start=None, pos_end=None):
 		self.pairs = pairs
@@ -580,6 +628,18 @@ class AttrAccessNode:
 	def __repr__(self):
 		return f'{self.obj_node}.{self.attr_name_tok}'
 
+class AttrAssignNode:
+	def __init__(self, obj_node, attr_name_tok, value_node):
+		self.obj_node = obj_node
+		self.attr_name_tok = attr_name_tok
+		self.value_node = value_node
+
+		self.pos_start = obj_node.pos_start
+		self.pos_end = value_node.pos_end
+	
+	def __repr__(self):
+		return f'{self.obj_node}.{self.attr_name_tok} = {self.value_node}'
+
 class ArrayAccessNode:
 	def __init__(self, obj_node, index_node):
 		self.obj_node = obj_node
@@ -589,6 +649,18 @@ class ArrayAccessNode:
 	
 	def __repr__(self):
 		return f'{self.obj_node}[{self.index_node}]'
+
+class ArrayAssignNode:
+	def __init__(self, obj_node, index_node, value_node):
+		self.obj_node = obj_node
+		self.index_node = index_node
+		self.value_node = value_node
+
+		self.pos_start = obj_node.pos_start
+		self.pos_end = value_node.pos_end
+	
+	def __repr__(self):
+		return f'{self.obj_node}[{self.index_node}] = {self.value_node}'
 
 class IfNode:
 	def __init__(self, cases, else_case):
@@ -616,6 +688,16 @@ class ForNode:
 	def __repr__(self):
 		return f'ForNode({self.var_name_tok}, {self.start_value_node}, {self.end_value_node}, {self.step_value_node}, {self.body_node}, {self.should_return_null})'
 
+class ForEachNode:
+	def __init__(self, var_name_tok, iterable_node, body_node, should_return_null):
+		self.var_name_tok = var_name_tok
+		self.iterable_node = iterable_node
+		self.body_node = body_node
+		self.should_return_null = should_return_null
+
+		self.pos_start = self.var_name_tok[0].pos_start
+		self.pos_end = self.body_node.pos_end
+
 class WhileNode:
 	def __init__(self, condition_node, body_node, should_return_null):
 		self.condition_node = condition_node
@@ -639,11 +721,13 @@ class VarAccessNode:
 		return f'VarAccessNode({self.var_name_tok})'
 
 class VarAssignNode:
-	def __init__(self, var_name_tok, value_node, constant=False, change_value=False):
+	def __init__(self, var_name_tok, value_node, constant=False, change_value=False, private=False, type_=None):
 		self.var_name_toks = var_name_tok
 		self.value_node = value_node
 		self.constant = constant
 		self.change_value = change_value	
+		self.private = private
+		self.type = type_
 
 		if not isinstance(self.var_name_toks, list):
 			self.var_name_toks = [var_name_tok]
@@ -1124,12 +1208,22 @@ class Parser:
 			res.register_advancement()
 			self.advance()
 
-			if self.current_tok.type == TT_EQ or self.current_tok.type == TT_ARROW:
+			if self.current_tok.type in (TT_EQ, TT_ARROW, TT_PE, TT_ME):
+				current_tok_type = self.current_tok.type
 				res.register_advancement()
 				self.advance()
-
 				value = res.register(self.expr())
 				if res.error: return res
+
+				if current_tok_type in (TT_PE, TT_ME):
+					target = tok
+					op_type = TT_PLUS if current_tok_type == TT_PE else TT_MINUS
+					op_tok = Token(op_type, pos_start=target.pos_start.copy(), pos_end=value.pos_end.copy())
+					bin_op_node = BinOpNode(VarAccessNode(tok), op_tok, value)
+					bin_op_node.pos_start = target.pos_start
+					bin_op_node.pos_end = value.pos_end
+					value = bin_op_node
+
 				return res.success(VarAssignNode(tok, value, change_value=True))
 			else:
 				return res.success(VarAccessNode(tok))
@@ -1153,10 +1247,27 @@ class Parser:
 			for_expr = res.register(self.for_expr())		
 			if res.error: return res
 			return res.success(for_expr)
+		
+		elif tok.matches(TT_KEYWORD, 'para'):
+			for_each_expr = res.register(self.for_each_expr())
+			if res.error: return res
+			return res.success(for_each_expr)
+		
+		elif tok.matches(TT_KEYWORD, 'classe'):
+			class_def = res.register(self.class_def())
+			if res.error: return res
+			return res.success(class_def)
 
 		elif tok.type == TT_LPAREN:
+			pos_start = tok.pos_start.copy()
 			res.register_advancement()
 			self.advance()
+			elements = []
+
+			if self.current_tok.type == TT_RPAREN:
+				res.register_advancement()
+				self.advance()
+				return res.success(TupleNode(elements, pos_start, self.current_tok.pos_end.copy()))
 
 			expr = res.register(self.expr())
 			if res.error: return res
@@ -1164,16 +1275,46 @@ class Parser:
 				res.register_advancement()
 				self.advance()
 				return res.success(expr)
+			
+			elif self.current_tok.type == TT_COMMA:
+				res.register_advancement()
+				self.advance()
+				elements.append(expr)
+				elements.append(res.register(self.expr()))
+				if res.error: return res
+
+				while self.current_tok.type == TT_COMMA:
+					res.register_advancement()
+					self.advance()
+					elements.append(res.register(self.expr()))
+					if res.error: return res
+
+				if self.current_tok.type != TT_RPAREN:
+					return res.failure(InvalidSyntaxError(
+						self.current_tok.pos_start, self.current_tok.pos_end,
+						"Esperava-se ')'"
+					))
+				res.register_advancement()
+				self.advance()
+
+				return res.success(TupleNode(elements, pos_start, self.current_tok.pos_end.copy()))
 			else:
 				return res.failure(InvalidSyntaxError(
 					self.current_tok.pos_start, self.current_tok.pos_end,
-					"Esperava-se ')'"
+					"Esperava-se ')' ou ','"
 				))
 		
 		elif tok.type == TT_LBRACKET:
 			list_expr = res.register(self.list_expr())
 			if res.error: return res
 			return res.success(list_expr)
+		
+		elif tok.matches(TT_KEYWORD, 'super'):
+			pos_start = tok.pos_start.copy()
+			
+			self.advance(res)
+
+			return res.success(SuperNode(pos_start, self.current_tok.pos_end.copy()))
 
 		return res.failure(InvalidSyntaxError(
 			tok.pos_start, tok.pos_end,
@@ -1332,6 +1473,64 @@ class Parser:
 		return res.success(DictNode(pairs, pos_start, self.current_tok.pos_end.copy()))
 
 
+	def class_def(self):
+		res = ParseResult()
+		
+		if not self.current_tok.matches(TT_KEYWORD, 'classe'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'classe'"
+			))
+		
+		res.register_advancement()
+		self.advance()
+		
+		if self.current_tok.type != TT_IDENTIFIER:
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				"Esperava-se um identificador para o nome da classe"
+			))
+		
+		class_name_tok = self.current_tok
+		res.register_advancement()
+		self.advance()
+
+		parent_name = None
+		if self.current_tok.matches(TT_KEYWORD, 'extende'):
+			self.advance(res)
+
+			if self.current_tok.type != TT_IDENTIFIER:
+				return res.failure(InvalidSyntaxError(
+					self.current_tok.pos_start, self.current_tok.pos_end,
+					"Esperava-se um identificador para o nome da classe pai"
+				))
+			
+			parent_name = self.current_tok
+			res.register_advancement()
+			self.advance()
+		
+		if self.current_tok.type != TT_NEWLINE:
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				"Esperava-se nova linha"
+			))
+		
+		res.register_advancement()
+		self.advance()
+		
+		body = res.register(self.statements())
+		if res.error: return res
+		
+		if not self.current_tok.matches(TT_KEYWORD, 'fim'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'fim'"
+			))
+		
+		res.register_advancement()
+		self.advance()
+		
+		return res.success(ClassNode(class_name_tok, body, parent_name))
 
 	def func_def(self):
 		res = ParseResult()
@@ -1342,6 +1541,11 @@ class Parser:
 			))
 		
 		self.advance(res)
+		is_private = False
+
+		if self.current_tok.matches(TT_KEYWORD, 'privada'):
+			self.advance(res)
+			is_private = True
 
 		if self.current_tok.type == TT_IDENTIFIER:
 			var_name_tok = self.current_tok
@@ -1367,6 +1571,7 @@ class Parser:
 		
 		self.advance(res)
 		arg_name_toks = []
+		default_value_pairs = []
 
 		if self.current_tok.type == TT_IDENTIFIER:
 			arg_name_toks.append(self.current_tok)
@@ -1381,7 +1586,14 @@ class Parser:
 					))
 				
 				arg_name_toks.append(self.current_tok)
+				tok = self.current_tok
 				self.advance(res)
+
+				if self.current_tok.type == TT_EQ:
+					self.advance(res)
+					default_value_pairs.append((tok.value, res.register(self.expr())))
+					if res.error: return res
+
 
 			if self.current_tok.type != TT_RPAREN:
 				return res.failure(InvalidSyntaxError(
@@ -1402,7 +1614,8 @@ class Parser:
 			node_to_return = res.register(self.expr())
 			if res.error: return res
 
-			return res.success(FuncDefNode(var_name_tok, arg_name_toks, node_to_return, True))
+			return res.success(FuncDefNode(var_name_tok, arg_name_toks, node_to_return, True, 
+		is_private))
 		
 		elif self.current_tok.type != TT_NEWLINE:
 			return res.failure(InvalidSyntaxError(
@@ -1429,7 +1642,8 @@ class Parser:
 		var_name_tok,
 		arg_name_toks,
 		body,
-		False
+		False,
+		is_private
 		))
 
 	def for_expr(self):
@@ -1515,6 +1729,92 @@ class Parser:
 			if res.error: return res
 			return res.success(ForNode(var_name_tok, start_value, end_value, step_value, body, False))
 	
+	def for_each_expr(self):
+		res = ParseResult()
+		
+		if not self.current_tok.matches(TT_KEYWORD, 'para'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'para'"
+			))
+
+		self.advance(res)
+
+		if not self.current_tok.matches(TT_KEYWORD, 'cada'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'cada' após 'para'"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		if self.current_tok.type != TT_IDENTIFIER:
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				"Esperava-se identificador para variável de iteração"
+			))
+
+		var_name_tok = [self.current_tok]
+		res.register_advancement()
+		self.advance()
+
+		while self.current_tok.type == TT_COMMA:
+			res.register_advancement()
+			self.advance()
+
+			if self.current_tok.type != TT_IDENTIFIER:
+				return res.failure(InvalidSyntaxError(
+					self.current_tok.pos_start, self.current_tok.pos_end,
+					"Esperava-se identificador para variável de iteração após ','"
+				))
+
+			var_name_tok.append(self.current_tok)
+			res.register_advancement()
+			self.advance()
+
+		if not self.current_tok.matches(TT_KEYWORD, 'em'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'em' após identificador"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		iterable_node = res.register(self.expr())
+		if res.error: return res
+
+		if not self.current_tok.matches(TT_KEYWORD, 'faça'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'faça'"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		if self.current_tok.type == TT_NEWLINE:
+			res.register_advancement()
+			self.advance()
+
+			body_node = res.register(self.statements())
+			if res.error: return res
+
+			if not self.current_tok.matches(TT_KEYWORD, 'fim'):
+				return res.failure(InvalidSyntaxError(
+					self.current_tok.pos_start, self.current_tok.pos_end,
+					f"Esperava-se 'fim'"
+				))
+
+			res.register_advancement()
+			self.advance()
+			return res.success(ForEachNode(var_name_tok, iterable_node, body_node, True))
+		else:
+			body_node = res.register(self.statement())
+			if res.error: return res
+			return res.success(ForEachNode(var_name_tok, iterable_node, body_node, False))
+
 	def while_expr(self):
 		res = ParseResult()
 		if not self.current_tok.matches(TT_KEYWORD, 'enquanto'):
@@ -1569,7 +1869,7 @@ class Parser:
 
 		while True:
 			if self.current_tok.type == TT_LPAREN:
-				# Tratar chamada de função
+				# Chamada de função
 				res.register_advancement()
 				self.advance()
 				arg_nodes = []
@@ -1610,7 +1910,7 @@ class Parser:
 				self.advance()
 				node = AttrAccessNode(node, attr_name)
 			elif self.current_tok.type == TT_LBRACKET:
-				# Tratar acesso a array
+				# array sla
 				res.register_advancement()
 				self.advance()
 
@@ -1628,6 +1928,16 @@ class Parser:
 				node = ArrayAccessNode(node, index_expr)
 			else:
 				break
+		
+		if self.current_tok.type == TT_EQ:
+			res.register_advancement()
+			self.advance()
+			expr = res.register(self.expr())
+			if res.error: return res
+			if isinstance(node, AttrAccessNode):
+				node = AttrAssignNode(node.obj_node, node.attr_name_tok, expr)
+			elif isinstance(node, ArrayAccessNode):
+				node = ArrayAssignNode(node.obj_node, node.index_node, expr)
 
 		return res.success(node)
 
@@ -1658,7 +1968,7 @@ class Parser:
 			if res.error: return res
 			return res.success(UnaryOpNode(op_tok, node))
 		
-		node = res.register(self.bin_op(self.arith_expr, (TT_EE, TT_NE, TT_GT, TT_GTE, TT_LT, TT_LTE, (TT_KEYWORD, 'igual'))))
+		node = res.register(self.bin_op(self.arith_expr, (TT_EE, TT_NE, TT_GT, TT_GTE, TT_LT, TT_LTE, (TT_KEYWORD, 'igual'), (TT_KEYWORD, 'em'))))
 		if res.error:
 			return res.failure(InvalidSyntaxError(
 				self.current_tok.pos_start, self.current_tok.pos_end,
@@ -1673,8 +1983,10 @@ class Parser:
 	def expr(self):
 		res = ParseResult()
 		constant = False
+		is_private = False
 
 		var_name_toks = []
+		type_ = None
 
 		if self.current_tok.matches(TT_KEYWORD, 'declarar'):
 			res.register_advancement()
@@ -1684,6 +1996,10 @@ class Parser:
 				res.register_advancement()
 				self.advance()
 				constant = True
+
+			if self.current_tok.matches(TT_KEYWORD, 'privada'):
+				self.advance(res)
+				is_private = True
 
 			if self.current_tok.type != TT_IDENTIFIER:
 				return res.failure(InvalidSyntaxError(
@@ -1711,9 +2027,14 @@ class Parser:
 				var_name_toks.append(var_name)
 				res.register_advancement()
 				self.advance()
+			
+			if self.current_tok.type == TT_COLON:
+				self.advance(res)
+				type_ = self.current_tok
+				self.advance(res)
 
 			if self.current_tok.type == TT_NEWLINE:
-				return res.success(VarAssignNode(var_name, None, constant=constant))
+				return res.success(VarAssignNode(var_name, None, constant=constant, private=is_private, type_=type_))
 			elif not (self.current_tok.matches(TT_KEYWORD, 'como') or self.current_tok.type in (TT_EQ, TT_ARROW)):
 				return res.failure(InvalidSyntaxError(
 					self.current_tok.pos_start, self.current_tok.pos_end,
@@ -1724,7 +2045,7 @@ class Parser:
 			self.advance()
 			expr = res.register(self.expr())
 			if res.error: return res
-			return res.success(VarAssignNode(var_name_toks, expr, constant=constant))
+			return res.success(VarAssignNode(var_name_toks, expr, constant=constant, private=is_private, type_=type_))
 
 		node = res.register(self.bin_op(self.comp_expr, ((TT_KEYWORD, 'e'), (TT_KEYWORD, 'ou'))))
 
@@ -1865,17 +2186,19 @@ class Value:
 		return None, self.illegal_operation(other)
 
 	def anded_by(self, other):
-		return None, self.illegal_operation(other)
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context), None
 
 	def ored_by(self, other):
-		return None, self.illegal_operation(other)
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context), None
 
 	def notted(self):
-		
+		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
+	
+	def included_in(self):
 		return None, self.illegal_operation()
 
 	def execute(self, args):
-		return RTResult().failure(self.illegal_operation())
+		return RTResult().failure(self.illegal_operation(exec_=True))
 
 	def copy(self):
 		raise Exception('Nenhum copy() metódo encontrado')
@@ -1883,8 +2206,14 @@ class Value:
 	def is_true(self):
 		return False
 
-	def illegal_operation(self, other=None):
+	def illegal_operation(self, other=None, exec_=None):
 		if not other: other = self
+		if exec_:
+			return RTError(
+				self.pos_start, other.pos_end,
+				f'Operação ilegal, tentativa de execução de {self}',
+				self.context
+			)
 		return RTError(
 			self.pos_start, other.pos_end,
 			f'Operação Ilegal entre {self} e {other}',
@@ -1979,7 +2308,18 @@ class Number(Value):
 	def is_true(self):
 		return (int(True if self.value > 0 else False))
 	
+	def included_in(self, other):
+		if isinstance(other, (List, Set, Tuple)):
+			for elem in other.elements:
+				if isinstance(elem, Number) and elem.value == self.value:
+					return Boolean(1).set_context(self.context), None
+			return Boolean(0).set_context(self.context), None
+		elif isinstance(other, String):
+			return Boolean(int(str(self.value) in other.value)).set_context(self.context), None
+		return Boolean(0).set_context(self.context), None
+	
 	def copy(self):
+		
 		copy = Number(self.value)
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.set_context(self.context)
@@ -2022,6 +2362,16 @@ class Boolean(Value):
 	def notted(self):
 		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
 
+	def included_in(self, other):
+		if isinstance(other, (List, Set, Tuple)):
+			for elem in other.elements:
+				if isinstance(elem, Boolean) and elem.value == self.value:
+					return Boolean(1).set_context(self.context), None
+			return Boolean(0).set_context(self.context), None
+		elif isinstance(other, String):
+			return Boolean(int(str(self.value).lower() in other.value.lower())).set_context(self.context), None
+		return Boolean(0).set_context(self.context), None
+
 	def is_true(self):
 		return 1 if self.value == 'verdadeiro' else 0
 	
@@ -2060,6 +2410,14 @@ class Nulo(Value):
 	def notted(self):
 		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
 	
+	def included_in(self, other):
+
+		if isinstance(other, (List, Set, Tuple)):
+			for elem in other.elements:
+				if isinstance(elem, Nulo):
+					return Boolean(1).set_context(self.context), None
+				
+		return Boolean(0).set_context(self.context), None
 	
 	def __repr__(self):
 		return "Nulo(null)"
@@ -2099,6 +2457,15 @@ class Set(Value):
 	def notted(self):
 		return Boolean(int(not self.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end)
 	
+	def included_in(self, other):
+
+		if isinstance(other, (List, Set, Tuple)):
+			for elem in other.elements:
+				if isinstance(elem, Set) and [str(x) for x in elem.elements] == [str(x) for x in self.elements]:
+					return Boolean(1).set_context(self.context), None
+					
+		return Boolean(0).set_context(self.context), None
+
 	def __repr__(self):
 		return f'Mesa({", ".join(self.elements)})'
 	
@@ -2173,6 +2540,17 @@ class String(Value):
 	def is_true(self):
 		return len(self.value) > 0 and self.value
 	
+	def included_in(self, other):
+		if isinstance(other, (List, Set, Tuple)):
+			for elem in other.elements:
+				if isinstance(elem, String) and elem.value == self.value:
+					return Boolean(1).set_context(self.context), None
+			return Boolean(0).set_context(self.context), None
+		elif isinstance(other, String):
+			return Boolean(int(self.value in other.value)).set_context(self.context), None
+		return Boolean(0).set_context(self.context), None
+
+	
 	def __str__(self):
 		return self.value
 	
@@ -2217,7 +2595,15 @@ class List(Value):
 	
 	def is_true(self):
 		return len(self.elements) > 0
-
+	
+	def included_in(self, other):
+		if isinstance(other, (List, Set, Tuple)):
+			for elem in other.elements:
+				if isinstance(elem, List) and [str(x) for x in elem.elements] == [str(x) for x in self.elements]:
+					return Boolean(1).set_context(self.context), None
+					
+		return Boolean(0).set_context(self.context), None
+	
 	def copy(self):
 		copy = List(self.elements)
 		copy.set_pos(self.pos_start, self.pos_end)
@@ -2228,6 +2614,49 @@ class List(Value):
 	
 	def __repr__(self):
 		return f'[{", ".join([str(x) for x in self.elements])}]'
+
+class Tuple(Value):
+	def __init__(self, elements):
+		super().__init__()
+		self.elements = elements
+
+	def added_to(self, other):
+		if isinstance(other, Tuple):
+			return Tuple(self.elements + other.elements), None
+		return None, self.illegal_operation(other)
+
+	def get_comparison_eq(self, other):
+		if isinstance(other, Tuple):
+			return Number(int(self.elements == other.elements)), None
+		return Number.false, None
+	
+	def is_true(self):
+		return len(self.elements) > 0
+	
+	def ored_by(self, other):
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context), None
+	
+	def anded_by(self, other):
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context), None
+	
+	def notted(self):
+		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
+	
+	def included_in(self, other):
+		if isinstance(other, (List, Set, Tuple)):
+			for elem in other.elements:
+				if isinstance(elem, Tuple) and elem.elements == self.elements:
+					return Boolean(1).set_context(self.context), None
+		return Boolean(0).set_context(self.context), None
+
+	def copy(self):
+		new_tup = Tuple(self.elements)
+		new_tup.set_pos(self.pos_start, self.pos_end)
+		new_tup.set_context(self.context)
+		return new_tup
+
+	def __repr__(self):
+		return f'({", ".join([str(e) for e in self.elements])})'
 
 class Dict(Value):
 	def __init__(self, elements):
@@ -2262,7 +2691,6 @@ class Dict(Value):
 		
 		return "{" + self.__str__() + "}"
 	
-	# Built-in methods
 	def keys(self):
 		return List([String(k.value) if isinstance(k.value, str) else Number(k.value) for k, v in self.elements])
 	
@@ -2294,7 +2722,7 @@ class BaseFunction(Value):
 	
 	def generate_new_context(self):
 		new_context = Context(self.name, self.context, self.pos_start)
-		new_context.symbol_table = SymbolTable(new_context.parent.symbol_table)
+		new_context.symbol_table = SymbolTable(new_context.parent.symbol_table if new_context.parent else global_symbol_table)
 		return new_context
 
 	def check_args(self, arg_names, args):
@@ -2336,6 +2764,93 @@ class BaseFunction(Value):
 	def __repr__(self):
 		return f"<função {self.name} em {FILENAME}>"
 
+class Class(BaseFunction):
+	def __init__(self, name, parent=False):
+		super().__init__(name)
+		self.arg_names = []
+		self.parent = parent
+		self.symbol_table = SymbolTable(
+			parent.symbol_table if parent else self.context.symbol_table if self.context else global_symbol_table
+		)
+
+	def execute(self, args):
+		res = RTResult()
+			
+		instance = Instance(self).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+		instance.symbol_table = SymbolTable(self.symbol_table)
+		instance.symbol_table.set("esse", instance) 
+	
+		constructor = self.symbol_table.get("principal")
+		if constructor:
+			res.register(constructor.execute([instance] + args))
+			if res.should_return(): return res
+		
+		self.context.symbol_table.set(instance.class_.name, instance)
+		
+		return res.success(instance)
+
+	def copy(self):
+		copy = Class(self.name, self.parent)
+		copy.symbol_table = self.symbol_table
+		copy.set_context(self.context)
+		copy.set_pos(self.pos_start, self.pos_end)
+		return copy
+
+	def __str__(self):
+		return f"<classe {self.name} em {FILENAME}>"
+
+class Instance(Value):
+	def __init__(self, class_):
+		super().__init__()
+		self.class_ = class_
+		self.symbol_table = SymbolTable(parent=class_.parent.symbol_table if class_.parent else class_.symbol_table)
+		if not self.symbol_table.get('esse'): self.symbol_table.set('esse', self)
+		if not self.context:
+			self.context = Context(f"instance_of_{self.class_.name}", parent=self.class_.name)
+		self.context.symbol_table = self.symbol_table
+		self.obj = None
+		self.type_name = class_.name 
+
+	def get(self, name):
+		value = self.symbol_table.get(name)
+		
+		if value is None and self.class_:
+			method = self.class_.symbol_table.get(name)
+			if isinstance(method, Function):
+				bound = method.copy()
+				bound.obj = self
+				return bound
+
+		return value if value is not None else Nulo().set_context(self.context).set_pos(self.pos_start, self.pos_end)
+
+	def set(self, name, value, constant=False):
+		self.symbol_table.set(name, value, constant)
+
+	def copy(self):
+		copy = Instance(self.class_)
+		copy.symbol_table = self.symbol_table
+		copy.set_context(self.context)
+		copy.set_pos(self.pos_start, self.pos_end)
+		return copy
+	
+	def execute(self, args):
+		return self.class_.execute(args)
+	
+	def is_true(self):
+		return True
+
+	def get_comparison_eq(self, other):
+		return Boolean(int(self is other)).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+	
+	def get_comparison_ne(self, other):
+		return Boolean(int(self is not other)).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+
+	def __repr__(self):
+		return f"<instância de {self.class_.name}>"
+	
+	def __str__(self):
+		return f"<instância de {self.class_.name} em {FILENAME}>"
+
 
 class Function(BaseFunction):
 	def __init__(self, name, body_node, arg_names, should_auto_return=True):
@@ -2343,25 +2858,41 @@ class Function(BaseFunction):
 		self.body_node = body_node
 		self.arg_names = arg_names
 		self.should_auto_return = should_auto_return
+		self.obj = None
+	
+	def set_obj(self, obj):
+		self.obj = obj
+		return obj
 
 	def execute(self, args):
 		res = RTResult()
 		interpreter = Interpreter()
-		new_context = self.generate_new_context()
+
+		if self.obj:
+			new_context = Context(self.name, parent=self.obj.context)
+			new_context.symbol_table = SymbolTable(self.obj.symbol_table)
+			args = [self.obj] + args
+		else:
+			new_context = self.generate_new_context()
 
 		res.register(self.check_and_populate_args(self.arg_names, args, new_context))
-		if res.should_return(): return res
+		if res.should_return():
+			return res
 
 		value = res.register(interpreter.visit(self.body_node, new_context))
-		if res.should_return() and res.func_return_value == None: return res
 
-		ret_value = (value if self.should_auto_return else None) or res.func_return_value or Number.null
-		return res.success(ret_value)
+		if res.should_return():
+			if res.func_return_value is not None:
+				return res.success(res.func_return_value)
+			return res
+
+		return res.success(value)
 
 	def copy(self):
 		copy = Function(self.name, self.body_node, self.arg_names, self.should_auto_return)
 		copy.set_context(self.context)
 		copy.set_pos(self.pos_start, self.pos_end)
+		copy.obj = self.obj
 		return copy
 
 class BuiltInFunction(BaseFunction):
@@ -2587,10 +3118,16 @@ class BuiltInFunction(BaseFunction):
 			return RTResult().success(String('dicionário'))
 		elif isinstance(exec_ctx.symbol_table.get('value'), Boolean):
 			return RTResult().success(String(String(exec_ctx.symbol_table.get('value').value)))
+		elif isinstance(exec_ctx.symbol_table.get('value'), Tuple):
+			return RTResult().success(String('tupla'))
 		elif isinstance(exec_ctx.symbol_table.get('value'), Nulo):
 			return RTResult().success(String('nulo'))
 		elif isinstance(exec_ctx.symbol_table.get('value'), (Set)):
 			return RTResult().success(String('mesa'))
+		elif isinstance(exec_ctx.symbol_table.get('value'), Instance):
+			return RTResult().success(String(exec_ctx.symbol_table.get('value').class_.name))
+		elif isinstance(exec_ctx.symbol_table.get('value'), Class):
+			return RTResult().success(String(exec_ctx.symbol_table.get('value').name))
 		else:
 			return RTResult().success(Number.null)
 
@@ -2695,6 +3232,28 @@ class BuiltInFunction(BaseFunction):
 		chars = [String(char) for char in value.value]
 		return RTResult().success(List(chars).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
 	execute_string_fatiar.arg_names = []
+
+	def execute_string_minúsculo(self, exec_ctx):
+		if isinstance(self.obj, String):
+			return RTResult().success(String(self.obj.value.lower()).set_pos(self.pos_start, self.pos_end).set_context(exec_ctx))
+		else:
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"'{self.obj}' não é uma string.",
+				exec_ctx
+			))
+	execute_string_minúsculo.arg_names = []
+	
+	def execute_string_maiúsculo(self, exec_ctx):
+		if isinstance(self.obj, String):
+			return RTResult().success(String(self.obj.value.upper()).set_pos(self.pos_start, self.pos_end).set_context(exec_ctx))
+		else:
+			return RTResult().failure(RTError(
+				self.pos_start, self.pos_end,
+				f"'{self.obj}' não é uma string.",
+				exec_ctx
+			))
+	execute_string_maiúsculo.arg_names = []
 
 	def execute_aleatório(self, exec_ctx):
 		if isinstance(exec_ctx.symbol_table.get('value'), Number) and isinstance(exec_ctx.symbol_table.get('max'), Number):
@@ -2900,30 +3459,69 @@ class Context:
 #######################################
 
 class SymbolTable:
-	def __init__(self, parent=None):
+	def __init__(self, parent=None, child=None):
 		self.symbols = {}
 		self.constants = []
+		self.privates = []
+		self.types = []
 		self.parent = parent
-
+		
 	def get(self, name):
 		value = self.symbols.get(name, None)
 		if value == None and self.parent:
-			return self.parent.get(name)
+			value = self.parent.get(name)
 		return value
 
-	def set(self, name, value, constant=False):
+	def set(self, name, value, constant=False, private=False, type_=None):
 		if name in self.constants:
 			return 'error'
 		if self.parent and name in self.parent.constants:
 			return 'error'
 		
 		self.symbols[name] = value
+		if private: self.privates.append(name)
 		if constant: self.constants.append(name)
+		if type_: self.types.append((name, type_))
+	
+	def get_type(self, name):
+		for var_name, type_token in self.types:
+			if var_name == name:
+				return type_token.value
+		if self.parent:
+			return self.parent.get_type(name)
+		return None
+	
+	def check_type_compatibility(self, declared_type, actual_type):
+		if declared_type == actual_type:
+			return True
+		
+		actual_class = self.get(actual_type)
+		declared_class = self.get(declared_type)
+
+		if isinstance(actual_class, Instance) and isinstance(declared_class, Instance):
+			current_parent = actual_class.class_.parent
+			while current_parent:
+				if current_parent.name == declared_type:
+					return True
+				current_parent = current_parent.parent
+		return False
 	
 	def is_constant(self, name):
 		val = name in self.constants
 		if self.parent: val = val or self.parent.is_constant(name)
 		return val
+
+	def is_private(self, name):
+		if name in self.privates: return True
+		if self.parent: val = val or self.parent.is_private(name)
+		return val
+	
+	def copy(self):
+		copy = SymbolTable()
+		copy.symbols = self.symbols.copy()
+		copy.parent = self.parent
+		copy.constants = self.constants.copy()
+		return copy
 
 	def remove(self, name):
 		del self.symbols[name]
@@ -2977,15 +3575,41 @@ class Interpreter:
 		
 		for part in node.parts:
 			if isinstance(part, StringNode):
-				# Static text part
 				evaluated_parts.append(('TEXT', part.tok.value))
 			else:
-				# Evaluate expression part
 				value = res.register(self.visit(part, context))
 				if res.error: return res
 				evaluated_parts.append(('EXPR', value))
 		
 		return res.success(String(evaluated_parts))
+
+	def visit_ClassNode(self, node: ClassNode, context):
+		res = RTResult()
+		
+		parent_class = None
+		if node.inheritance:
+			parent_value = context.symbol_table.get(node.inheritance.value)
+			if not isinstance(parent_value, Class):
+				return res.failure(RTError(
+					node.pos_start, node.pos_end,
+					f"Superclasse '{node.inheritance.value}' não é uma classe válida",
+					context
+				))
+			parent_class = parent_value
+			
+		class_value = Class(
+			node.class_name_tok.value,
+			parent_class
+		)
+		
+		class_context = Context(class_value.name, parent=context)
+		class_context.symbol_table = class_value.symbol_table
+
+		res.register(self.visit(node.body_node, class_context))
+		if res.error: return res
+		
+		context.symbol_table.set(class_value.name, class_value)
+		return res.success(class_value)
 
 	def visit_VarAccessNode(self, node, context):
 		res = RTResult()
@@ -2993,6 +3617,14 @@ class Interpreter:
 		value = context.symbol_table.get(var_name)
 
 		if not value:
+			if hasattr(context, 'symbol_table') and hasattr(context.symbol_table, 'parent') and context.symbol_table.parent:
+				instance = context.symbol_table.parent.get('esse')
+				if isinstance(instance, Instance):
+					value = instance.get(var_name)
+					if value:
+						value = value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)
+						return res.success(value)
+			
 			return res.failure(RTError(
 				node.pos_start, node.pos_end,
 				f"'{var_name}' nunca foi declarado",
@@ -3004,34 +3636,43 @@ class Interpreter:
 
 	def visit_VarAssignNode(self, node, context):
 		res = RTResult()
-	
+		
 		value = res.register(self.visit(node.value_node, context)) if node.value_node else Nulo().set_context(context).set_pos(node.pos_start, node.pos_end)
 		if res.should_return(): return res
 		
-		if len(node.var_name_toks) > 1:
-			if not isinstance(value, List) or (len(value.elements) or 1) != len(node.var_name_toks):
+		for var_tok in node.var_name_toks:
+			var_name = var_tok.value
+						
+			
+			if 'esse' in context.symbol_table.symbols and isinstance(context.symbol_table.get('esse'), Instance):
+				instance = context.symbol_table.get('esse')
+				instance.set(var_name, value.copy(), node.constant)
+			else:
+				result = context.symbol_table.set(var_name, value.copy(), node.constant, node.private, node.type)
+				if result == 'error':
+					return res.failure(RTError(
+						node.pos_start, node.pos_end,
+						f"'{var_name}' não pode ser alterado, já que é uma constante.",
+						context
+					))
+		
+		declared_type = context.symbol_table.get_type(var_name)
+		if declared_type:
+			actual_type = (
+				value.type_name
+				if isinstance(value, Instance)
+				else value.__class__.__name__.lower()
+			)
+			
+			if not context.symbol_table.check_type_compatibility(declared_type, actual_type):
 				return res.failure(RTError(
 					node.pos_start, node.pos_end,
-					f"Quantidade de variáveis ({len(node.var_name_toks)}) diferente da quantidade de valores ({len(value.elements)}).",
+					f"Tipo inválido para '{var_name}': esperado '{declared_type}', obtido '{actual_type}'.",
 					context
 				))
-				
-			for var_tok, element in zip(node.var_name_toks, value.elements):
-				value = context.symbol_table.set(var_tok.value, element.copy(), node.constant)
-				if value == 'error':
-					return res.failure(RTError(
-						node.pos_start, node.pos_end,
-						f"'{var_tok.value}' não pode ser alterado, já que é uma constante.",
-						context
-					))
-		else:
-			value = context.symbol_table.set(node.var_name_toks[0].value, value, node.constant)
-			if value == 'error':
-					return res.failure(RTError(
-						node.pos_start, node.pos_end,
-						f"'{node.var_name_toks[0].value}' não pode ser alterado, já que é uma constante.",
-						context
-					))
+
+		value = value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)
+		
 		return res.success(value)
 	
 	def visit_ListNode(self, node, context):
@@ -3044,6 +3685,16 @@ class Interpreter:
 
 		return res.success(List(elements).set_context(context).set_pos(node.pos_start, node.pos_end))
 	
+	def visit_TupleNode(self, node, context):
+		res = RTResult()
+		elements = []
+		
+		for element_node in node.element_nodes:
+			elements.append(res.register(self.visit(element_node, context)))
+			if res.error: return res
+			
+		return res.success(Tuple(elements))
+
 	def visit_DictNode(self, node, context):
 		res = RTResult()
 		elements = []
@@ -3061,7 +3712,7 @@ class Interpreter:
 		
 		return res.success(Dict(elements).set_context(context).set_pos(node.pos_start, node.pos_end))
 	
-	def visit_AttrAccessNode(self, node, context):
+	def visit_AttrAccessNode(self, node, context: Context):
 		res = RTResult()
 		obj = res.register(self.visit(node.obj_node, context))
 		if res.error: return res
@@ -3070,16 +3721,14 @@ class Interpreter:
 
 		if isinstance(obj, Dict):
 			if attr_name in ["chaves", "valores", "itens", "mudar", "extender"]:
-				# Create the built-in function and attach the dictionary
 				if attr_name == "chaves": attr_name = "keys"
 				elif attr_name == "valores": attr_name = "values"
 				elif attr_name == "itens": attr_name = "items"
 				func = BuiltInFunction(f"dict_{attr_name}")
-				func.obj = obj  # Attach the dictionary instance
+				func.obj = obj
 				func.set_context(context)
 				return res.success(func)
 			else:
-				# Handle key access
 				for key, value in obj.elements:
 					if key.value == attr_name:
 						return res.success(value.copy())
@@ -3091,7 +3740,7 @@ class Interpreter:
 		elif isinstance(obj, List):
 			if attr_name in ["invertida", "procurar", "colocar", "estourar", "extender", "mudar"]:
 				func = BuiltInFunction(f"list_{attr_name}")
-				func.obj = obj  # Attach the list instance
+				func.obj = obj
 				func.set_context(context)
 				return res.success(func)
 			else:
@@ -3101,9 +3750,9 @@ class Interpreter:
 					context
 				))
 		elif isinstance(obj, String):
-			if attr_name in ["fatiar", "picotar", "limpar"]:
+			if attr_name in ["fatiar", "picotar", "limpar", "maiúsculo", "minúsculo"]:
 				func = BuiltInFunction(f"string_{attr_name}")
-				func.obj = obj  # Attach the string instance
+				func.obj = obj
 				func.set_context(context)
 				return res.success(func)
 			else:
@@ -3112,6 +3761,14 @@ class Interpreter:
 					f"Atributo '{attr_name}' para strings não encontrado, talvez tenha confudido com os métodos de dicionários?",
 					context
 				))
+		elif isinstance(obj, Instance):
+			inst = obj
+			value = obj.get(attr_name)
+			context.symbol_table.set('esse', inst, private=True)
+			if isinstance(value, Function):
+				value.set_obj(inst)
+			return res.success(value)
+		
 
 		return res.failure(RTError(
 			node.pos_start, node.pos_end,
@@ -3119,18 +3776,46 @@ class Interpreter:
 			context
 		))
 	
-	def visit_ArrayAccessNode(self, node, context):
+	def visit_AttrAssignNode(self, node, context):
 		res = RTResult()
 		
-		# Get the object (list/dict) by evaluating the node
 		obj = res.register(self.visit(node.obj_node, context))
 		if res.error: return res
 		
-		# Get the index by evaluating the index node
+		value = res.register(self.visit(node.value_node, context))
+		if res.error: return res
+		
+		attr_name = node.attr_name_tok.value
+
+		if isinstance(obj, Instance):
+			obj.set(attr_name, value)
+			return res.success(value)
+		elif isinstance(obj, Dict):
+			found = False
+			for i, (k, v) in enumerate(obj.elements):
+				if k.value == attr_name:
+					obj.elements[i] = (k, value)
+					found = True
+					break
+			if not found:
+				obj.elements.append((String(attr_name), value))
+			return res.success(value)
+		
+		return res.failure(RTError(
+			node.pos_start, node.pos_end,
+			"Attribute assignment only supported for class instances and dictionaries",
+			context
+		))
+	
+	def visit_ArrayAccessNode(self, node, context):
+		res = RTResult()
+		
+		obj = res.register(self.visit(node.obj_node, context))
+		if res.error: return res
+		
 		index = res.register(self.visit(node.index_node, context))
 		if res.error: return res
 		
-		# Handle list access
 		if isinstance(obj, List):
 			try:
 				value = (obj.elements[int(index.value)])
@@ -3222,6 +3907,26 @@ class Interpreter:
 			repr(error_name), repr(details)
 		))
 	
+	def visit_SuperNode(self, node, context):
+		res = RTResult()
+		instance = context.symbol_table.get('esse')
+		
+		if not isinstance(instance, Instance):
+			return res.failure(RTError(
+				node.pos_start, node.pos_end,
+				"'super()' só pode ser usado dentro de métodos de classe",
+				context
+			))
+		
+		if not instance.class_.parent:
+			return res.failure(RTError(
+				node.pos_start, node.pos_end,
+				"A classe não possui uma superclasse",
+				context
+			))
+
+		return res.success(instance.class_.parent.set_context(context).set_pos(node.pos_start, node.pos_end))
+	
 	def visit_ImportNode(self, node, context):
 		res = RTResult()
 	
@@ -3260,11 +3965,17 @@ class Interpreter:
 				context
 			))
 		
-		# Import the specified functions
 		for func_tok in node.functions:
 			func_name = func_tok.value
 			func_value = module_ctx.symbol_table.get(func_name)
 			func_const = module_ctx.symbol_table.is_constant(func_name)
+
+			if module_ctx.symbol_table.is_private(func_name):
+				return res.failure(RTError(
+					node.pos_start, node.pos_end,
+					f"Function '{func_name}' is private and cannot be imported",
+					context
+				))
 			if not func_value:
 				return res.failure(RTError(
 					node.pos_start, node.pos_end,
@@ -3285,7 +3996,7 @@ class Interpreter:
 		func_value = Function(func_name, body_node, arg_names, node.should_auto_return).set_context(context).set_pos(node.pos_start, node.pos_end)
 
 		if node.var_name_tok:
-			context.symbol_table.set(func_name, func_value)
+			context.symbol_table.set(func_name, func_value, private=node.private)
 
 		return res.success(func_value)
 	
@@ -3357,6 +4068,8 @@ class Interpreter:
 			result, error = left.anded_by(right)
 		elif node.op_tok.matches(TT_KEYWORD, 'ou'):
 			result, error = left.ored_by(right)
+		elif node.op_tok.matches(TT_KEYWORD, 'em'):
+			result, error = left.included_in(right)
 
 		if error:
 			return res.failure(error)
@@ -3418,6 +4131,80 @@ class Interpreter:
 			elements.append(value)
 
 		return res.success(Number.null if node.should_return_null else List(elements).set_context(context).set_pos(node.pos_start, node.pos_end))
+
+	
+	def visit_ForEachNode(self, node, context):
+		res = RTResult()
+		elements = []
+		
+		iterable = res.register(self.visit(node.iterable_node, context))
+		if res.error: return res
+		
+		var_names = [tok.value for tok in node.var_name_tok]
+		
+		if not isinstance(iterable, (List, Tuple, Set, Dict)):
+			return res.failure(RTError(
+				node.pos_start, node.pos_end,
+				"Iterável deve ser lista, tuple, string ou dicionário",
+				context
+			))
+			
+		items = iterable.elements
+		single = False
+
+		if isinstance(iterable, Tuple):
+			for item in items:
+				if len(var_names) == 1:
+					context.symbol_table.set(var_names[0], item.copy())
+				else:
+					for var_name, element in zip(var_names, items):
+						context.symbol_table.set(var_name, element.copy())
+						single = True
+				
+				value = res.register(self.visit(node.body_node, context))
+				if res.should_return() and not res.loop_should_continue and not res.loop_should_break:
+					return res
+					
+				if res.loop_should_continue:
+					continue
+					
+				if res.loop_should_break:
+					break
+
+				if single == True:
+					elements.append(value)
+					break
+					
+				elements.append(value)
+		else:
+			for item in items:
+				if isinstance(item, tuple) and isinstance(iterable, Dict) and len(var_names) == len(item):
+					for var_name, element in zip(var_names, item):
+						context.symbol_table.set(var_name, element.copy())
+				elif isinstance(iterable, Dict):
+					for var_name in var_names:
+						context.symbol_table.set(var_name, Tuple(item).set_context(context).set_pos(node.pos_start, node.pos_end))
+				elif isinstance(item, Tuple) and len(var_names) == len(item.elements):
+					for var_name, element in zip(var_names, item.elements):
+						context.symbol_table.set(var_name, element.copy())
+				else:
+					for name in var_names:
+						context.symbol_table.set(name, item.copy())
+				
+				value = res.register(self.visit(node.body_node, context))
+				if res.should_return() and not res.loop_should_continue and not res.loop_should_break:
+					return res
+					
+				if res.loop_should_continue:
+					continue
+					
+				if res.loop_should_break:
+					break
+					
+				elements.append(value)
+		
+		return res.success(Number.null if node.should_return_null else List(elements))
+
 
 	def visit_WhileNode(self, node, context):
 		res = RTResult()
@@ -3511,5 +4298,6 @@ def run(fn, text):
 	interpreter = Interpreter()
 	context = Context('<program>')
 	context.symbol_table = SymbolTable(global_symbol_table)
+	global_symbol_table.child = context.symbol_table
 	result = interpreter.visit(ast.node, context)
 	return result.value, result.error, context

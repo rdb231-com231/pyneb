@@ -32,7 +32,7 @@ while True:
             except AttributeError:
                 print(error.details)
         
-        if result: print(repr(result))
+        if result: print(repr(result)); continue
     
     elif sys.argv[1] == 'setmain':
         with open('.config', 'w', encoding='utf-8') as f:
