@@ -1,6 +1,4 @@
 #modules/listas.neb
-função elemento usando(list)
-    conferir type(list) == "lista" usando "InvalidSyntax" detalhes "Esperava-se lista, não ${type(list)}"
-
-    retornar pegar(list, aleatório(0, len(list) - 1))
+função elemento usando (listinha: lista[qualquer])
+    retornar listinha[aleatório(0, len(listinha) - 1)]
 fim

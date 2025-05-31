@@ -58,7 +58,7 @@ class Error:
 	
 	def as_string(self):
 		result  = f'{self.error_name}: {self.details}\n'
-		result += f'File {self.pos_start.fn}, line {self.pos_start.ln + 1}'
+		result += f'Arquivo {self.pos_start.fn}, linha {self.pos_start.ln + 1}'
 		result += '\n\n' + string_with_arrows(self.pos_start.ftxt if self.pos_start else None, self.pos_start, self.pos_end)
 		return result
 
@@ -91,7 +91,7 @@ class RTError(Error):
 		ctx = self.context
 
 		while ctx:
-			result = f'  File {pos.fn}, line {str(pos.ln + 1)}, in {ctx.display_name}\n' + result
+			result = f'  Arquivo {pos.fn}, linha {str(pos.ln + 1)}, em {ctx.display_name}\n' + result
 			pos = ctx.parent_entry_pos
 			ctx = ctx.parent
 
@@ -483,12 +483,13 @@ class Lexer:
 #######################################
 
 class FuncDefNode:
-	def __init__(self, var_name_tok, arg_name_toks, body_node, should_auto_return, private=False):
+	def __init__(self, var_name_tok, arg_name_toks, body_node, should_auto_return, private=False, default_vals=None):
 		self.var_name_tok = var_name_tok
 		self.arg_name_toks = arg_name_toks
 		self.body_node = body_node
 		self.should_auto_return = should_auto_return
 		self.private = private
+		self.default_vals = default_vals
 
 		if self.var_name_tok:
 			self.pos_start = self.var_name_tok.pos_start
@@ -503,12 +504,12 @@ class FuncDefNode:
 		return f'FuncDefNode({self.var_name_tok}, {self.arg_name_toks}, {self.body_node}, {self.should_auto_return})'
 
 class SuperNode:
-    def __init__(self, pos_start, pos_end):
-        self.pos_start = pos_start
-        self.pos_end = pos_end
+	def __init__(self, pos_start, pos_end):
+		self.pos_start = pos_start
+		self.pos_end = pos_end
 
-    def __repr__(self):
-        return "super()"
+	def __repr__(self):
+		return "super()"
 
 class ClassNode:
 	def __init__(self, class_name_tok, body_node, inheritance):
@@ -1574,8 +1575,16 @@ class Parser:
 		default_value_pairs = []
 
 		if self.current_tok.type == TT_IDENTIFIER:
+			tok = self.current_tok
 			arg_name_toks.append(self.current_tok)
 			self.advance(res)
+
+			if self.current_tok.type == TT_EQ:
+					self.advance(res)
+					default_value_pairs.append((tok.value, res.register(self.expr())))
+					if res.error: return res
+			else:
+				default_value_pairs.append((None, None))
 
 			while self.current_tok.type == TT_COMMA:
 				self.advance(res)
@@ -1593,6 +1602,8 @@ class Parser:
 					self.advance(res)
 					default_value_pairs.append((tok.value, res.register(self.expr())))
 					if res.error: return res
+				else:
+					default_value_pairs.append((None, None))
 
 
 			if self.current_tok.type != TT_RPAREN:
@@ -1615,7 +1626,7 @@ class Parser:
 			if res.error: return res
 
 			return res.success(FuncDefNode(var_name_tok, arg_name_toks, node_to_return, True, 
-		is_private))
+		is_private, default_vals=default_value_pairs))
 		
 		elif self.current_tok.type != TT_NEWLINE:
 			return res.failure(InvalidSyntaxError(
@@ -1637,13 +1648,15 @@ class Parser:
 
 		res.register_advancement()
 		self.advance()
+
 		
 		return res.success(FuncDefNode(
 		var_name_tok,
 		arg_name_toks,
 		body,
 		False,
-		is_private
+		is_private,
+		default_vals=default_value_pairs
 		))
 
 	def for_expr(self):
@@ -1738,7 +1751,8 @@ class Parser:
 				f"Esperava-se 'para'"
 			))
 
-		self.advance(res)
+		self.advance()
+		res.register_advancement()
 
 		if not self.current_tok.matches(TT_KEYWORD, 'cada'):
 			return res.failure(InvalidSyntaxError(
@@ -1869,7 +1883,6 @@ class Parser:
 
 		while True:
 			if self.current_tok.type == TT_LPAREN:
-				# Chamada de função
 				res.register_advancement()
 				self.advance()
 				arg_nodes = []
@@ -2718,7 +2731,7 @@ class Dict(Value):
 class BaseFunction(Value):
 	def __init__(self, name):
 		super().__init__()
-		self.name = name or "<anonymous>"
+		self.name = name or "<anônima>"
 	
 	def generate_new_context(self):
 		new_context = Context(self.name, self.context, self.pos_start)
@@ -2853,12 +2866,13 @@ class Instance(Value):
 
 
 class Function(BaseFunction):
-	def __init__(self, name, body_node, arg_names, should_auto_return=True):
+	def __init__(self, name, body_node, arg_names, should_auto_return=True, arg_defaults=False):
 		super().__init__(name)
 		self.body_node = body_node
 		self.arg_names = arg_names
 		self.should_auto_return = should_auto_return
 		self.obj = None
+		self.arg_defaults = arg_defaults or []
 	
 	def set_obj(self, obj):
 		self.obj = obj
@@ -2874,8 +2888,27 @@ class Function(BaseFunction):
 			args = [self.obj] + args
 		else:
 			new_context = self.generate_new_context()
+		
+		evaluated_args = []
+		for i in range(len(self.arg_names)):
+			if i < len(args):
+				evaluated_args.append(args[i])
+			else:
+				if i < len(self.arg_defaults) and self.arg_defaults[i][1] is not None:
+					default_value = res.register(interpreter.visit(
+						self.arg_defaults[i][1], new_context
+					))
+					if res.error: return res
+					evaluated_args.append(default_value)
+				else:
+					return res.failure(RTError(
+						self.pos_start, self.pos_end,
+						f"Faltando argumento para '{self.arg_names[i]}'",
+						new_context
+					))
+		
 
-		res.register(self.check_and_populate_args(self.arg_names, args, new_context))
+		res.register(self.check_and_populate_args(self.arg_names, evaluated_args, new_context))
 		if res.should_return():
 			return res
 
@@ -2889,7 +2922,7 @@ class Function(BaseFunction):
 		return res.success(value)
 
 	def copy(self):
-		copy = Function(self.name, self.body_node, self.arg_names, self.should_auto_return)
+		copy = Function(self.name, self.body_node, self.arg_names, self.should_auto_return, self.arg_defaults)
 		copy.set_context(self.context)
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.obj = self.obj
@@ -2907,7 +2940,23 @@ class BuiltInFunction(BaseFunction):
 		method_name = f'execute_{self.name}'
 		method = getattr(self, method_name, self.no_visit_method)
 
-		res.register(self.check_and_populate_args(method.arg_names, args, exec_ctx))
+		evaluated_args = None
+		if hasattr(method, 'default_args'):
+			evaluated_args = []
+			for i in range(len(method.arg_names)):
+				if i < len(args):
+					evaluated_args.append(args[i])
+				else:
+					if i < len(method.default_args) and method.default_args[i] is not None:
+						evaluated_args.append(method.default_args[i])
+					else:
+						return res.failure(RTError(
+							self.pos_start, self.pos_end,
+							f"Faltando argumento para '{self.arg_names[i]}'",
+							exec_ctx
+						))
+
+		res.register(self.check_and_populate_args(method.arg_names, evaluated_args or args, exec_ctx))
 		if res.should_return(): return res
 
 		return_value = res.register(method(exec_ctx))
@@ -2999,7 +3048,7 @@ class BuiltInFunction(BaseFunction):
 		
 	def execute_falar(self, exec_ctx):
 		print(str(exec_ctx.symbol_table.get('value')))
-		return RTResult().success(str(exec_ctx.symbol_table.get('value')))
+		return RTResult().success(String(str(exec_ctx.symbol_table.get('value'))))
 	execute_falar.arg_names = ['value']
 
 	def execute_pegar(self, exec_ctx):
@@ -3073,11 +3122,13 @@ class BuiltInFunction(BaseFunction):
 				exec_ctx
 			))
 	execute_list_estourar.arg_names = ['index']
+	execute_list_estourar.default_args = [Number(-1)]
 
 	def execute_perguntar(self, exec_ctx):
 		text = input(exec_ctx.symbol_table.get('prompt').value)
 		return RTResult().success(String(text))
 	execute_perguntar.arg_names = ['prompt']
+	execute_perguntar.default_args = [String('')]
 
 	def execute_input_int(self, exec_ctx):
 		while True:
@@ -3442,6 +3493,7 @@ class BuiltInFunction(BaseFunction):
 		return RTResult().success(Number.null)
 
 	execute_esperar.arg_names = ["time"]
+	execute_esperar.default_args = [Number(1)]
 
 #######################################
 # CONTEXT
@@ -3994,7 +4046,8 @@ class Interpreter:
 		func_name = node.var_name_tok.value if node.var_name_tok else None
 		body_node = node.body_node
 		arg_names = [arg_name.value for arg_name in node.arg_name_toks]
-		func_value = Function(func_name, body_node, arg_names, node.should_auto_return).set_context(context).set_pos(node.pos_start, node.pos_end)
+		func_value = Function(func_name, body_node, arg_names, node.should_auto_return, arg_defaults=node.default_vals).set_context(context).set_pos(node.pos_start, node.pos_end)
+		func_value.arg_defaults = [node.default_vals[i] for i in range(len(node.default_vals))]
 
 		if node.var_name_tok:
 			context.symbol_table.set(func_name, func_value, private=node.private)
@@ -4007,6 +4060,12 @@ class Interpreter:
 
 		value_to_call = res.register(self.visit(node.node_to_call, context))
 		if res.should_return(): return res
+		if not isinstance(value_to_call, (BaseFunction, Class, Instance)):
+			return res.failure(RTError(
+				node.pos_start, node.pos_end,
+				f"'{value_to_call}' não pode ser executado",
+				context
+			))
 		value_to_call = value_to_call.copy().set_pos(node.pos_start, node.pos_end)
 
 		for arg_node in node.arg_nodes:

@@ -1,6 +1,7 @@
 import sys
 import os
 import pyneb
+from termcolor import colored, cprint
 
 try:
     if not sys.argv[1]:
@@ -13,26 +14,31 @@ except IndexError:
 while True:
 
     if sys.argv[1] == '__shell__':
-        text = input('nebula > ')
-        if text == 'exit':
-            break
-        
-        elif text == '':
-            continue
 
-        elif text == 'help':
-            print("Commands:\n  help: Show this message\n  exit: Exit the shell\n  <code>: Run code\n .config: Show default config\n  .version: Show version\n  __path__: Show path to nebula.bat\n  __shell__: Enter shell mode")
-            continue
+        cprint("Nebula Shell", 'blue', attrs=["bold", "underline", "blink"])
+        print('\n')
+        cprint("Enter 'exit' to exit the shell.", 'green')
+        cprint("Enter 'help' for help.", 'green')
+        cprint("Made by MewPlush, Brazil.", 'light_red', attrs=['bold', 'underline'])
+        print('\n\n')
+        while True:
+            text = input(colored('nebula >> ', 'magenta'))
+            if text == 'exit':
+                break
+            
+            elif text == '':
+                continue
 
-        result, error, ctx = pyneb.run('<stdin>', text)
+            elif text == 'help':
+                print("Commands:\n  help: Show this message\n  exit: Exit the shell\n  <code>: Run code\n .config: Show default config\n  .version: Show version\n  __path__: Show path to nebula.bat\n  __shell__: Enter shell mode")
+                continue
 
-        if error:
-            try: 
-                print(error.as_string())
-            except AttributeError:
-                print(error.details)
-        
-        if result: print(repr(result)); continue
+            result, error, ctx = pyneb.run('<stdin>', text)
+
+            if error: cprint(error.as_string(), 'red', attrs=['dark', 'bold']); break
+            
+            if result: cprint(repr(result), 'light_yellow', attrs=['bold']); continue
+        break
     
     elif sys.argv[1] == 'setmain':
         with open('.config', 'w', encoding='utf-8') as f:
@@ -43,6 +49,7 @@ while True:
             f.write(f"access_point_main={sys.argv[2]};")
             f.write(f"\nversion={pyneb.DEFAULT_CONFIG['version']};")
             f.write(f"\ninno_setup={"'true'" if os.path.exists(os.path.abspath(os.path.join(sys.path[0], "unins000.exe"))) else "'false'"};")
+        cprint('Successo!', 'green', attrs=['bold'])
         break
 
 
@@ -54,6 +61,7 @@ while True:
                 f.write(f"access_point_main='not-defined';" )
             f.write(f"\nversion={pyneb.DEFAULT_CONFIG['version']};")
             f.write(f'\ninno_setup={"'true'" if os.path.exists(os.path.abspath(os.path.join(sys.path[0], "unins000.exe"))) else "'false'"};')
+        cprint('Successo!', 'green', attrs=['bold'])
         break
 
     elif sys.argv[1] == '.':
@@ -74,14 +82,9 @@ while True:
                 text = f.read()
                 if not text: print("Arquivo vazio, favor adicionar algum código."); break
                 _, error, ctx = pyneb.run(filename, text)
-                if error: 
-                    try: 
-                        print(error.as_string())
-                    except AttributeError:
-                        print(error.details)
-                else: break
+                if error: cprint(error.as_string(), 'red', attrs=['dark', 'bold']); break
         except FileNotFoundError:
-            print(f"File {filename} not found. Please use command: \"nebula <filename>\"")
+            cprint(f"File {filename} not found. Please use command: \"nebula <filename>\"", 'cyan', attrs=['dark', 'bold'])
             break
     
     elif sys.argv[1] in ('--config', '-c'):
@@ -89,7 +92,7 @@ while True:
         break
     
     elif sys.argv[1] in ('--version', '-v'):
-        print(pyneb.DEFAULT_CONFIG['version'])
+        cprint(pyneb.DEFAULT_CONFIG['version'], 'blue', attrs=['underline'])
         break
 
     elif sys.argv[1] in ('__path__', "--p"):
@@ -119,15 +122,9 @@ while True:
                 text = f.read()
                 if not text: print("Arquivo vazio, favor adicionar algum código."); break
                 _, error, ctx = pyneb.run(sys.argv[1], text)
-                if error:
-                    try: 
-                        print(error.as_string())
-                    except AttributeError:
-                        print(error.details)
-                    break
-                else: break
+                if error: cprint(error.as_string(), 'red', attrs=['dark', 'bold']); break
         except FileNotFoundError:
-            print(f"File {sys.argv[1]} not found. Please use command: \"nebula <filename>\"")
+            cprint(f"File {sys.argv[1]} not found. Please use command: \"nebula <filename>\"", 'cyan', attrs=['dark', 'bold'])
             break
     
     break
