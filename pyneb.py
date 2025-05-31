@@ -25,7 +25,7 @@ FILENAME = ''
 ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.neb')]
 
 DEFAULT_CONFIG = {
-	'version': "1.4.0",
+	'version': "1.4.5",
 	'author': 'mewplush',
 	'publisher': 'mewplush',
 	'interpreter': 'pyneb',
@@ -206,7 +206,9 @@ KEYWORDS = [
 	'string',
 	'número',
 	'extende',
-	'super'
+	'super',
+	'tentar',
+	'caso'
 ]
 
 class Token:
@@ -811,6 +813,18 @@ class RaiseNode:
 	def __repr__(self):
 		return f'RaiseNode({self.error_name}, {self.details})'
 
+class TryCatchNode:
+	def __init__(self, try_body, catch_var_tok, catch_body):
+		self.try_body = try_body
+		self.catch_var_tok = catch_var_tok
+		self.catch_body = catch_body
+		
+		self.pos_start = self.try_body.pos_start
+		self.pos_end = self.catch_body.pos_end
+	
+	def __repr__(self):
+		return f'TryCatchNode({self.try_body}, {self.catch_var_tok}, {self.catch_body})'
+
 class ImportNode:
 	def __init__(self, file_path, functions, pos_start, pos_end):
 		self.file_path = file_path
@@ -1168,7 +1182,94 @@ class Parser:
 		cases.extend(new_cases)
 
 		return res.success((cases, else_case))
+	
+	def try_expr(self):
+		res = ParseResult()
 
+		if not self.current_tok.matches(TT_KEYWORD, 'tentar'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'tentar'"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		if self.current_tok.type == TT_NEWLINE:
+			res.register_advancement()
+			self.advance()
+
+			try_body = res.register(self.statements())
+			if res.error: return res
+		elif self.current_tok.type == TT_ARROW:
+			res.register_advancement()
+			self.advance()
+
+			try_body = res.register(self.statement())
+			if res.error: return res
+		else:
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'nova	linha' ou '=>'"
+			))
+
+		if not self.current_tok.matches(TT_KEYWORD, 'caso'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'caso'"
+			))
+		
+		res.register_advancement()
+		self.advance()
+
+		if self.current_tok.type != TT_IDENTIFIER:
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				"Esperava-se um identificador"
+			))
+		
+		catch_var_name = self.current_tok
+		res.register_advancement()
+		self.advance()
+
+		if not self.current_tok.matches(TT_KEYWORD, 'faça'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'faça'"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		if self.current_tok.type == TT_NEWLINE:
+			res.register_advancement()
+			self.advance()
+
+			exception_body = res.register(self.statements())
+			if res.error: return res
+		elif self.current_tok.type == TT_ARROW:
+			res.register_advancement()
+			self.advance()
+
+			exception_body = res.register(self.statement())
+			if res.error: return res
+		else:
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'nova	linha' ou '=>'"
+			))
+
+		if not self.current_tok.matches(TT_KEYWORD, 'fim'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'fim'"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		return res.success(TryCatchNode(try_body, catch_var_name, exception_body))
+			
 	def atom(self):
 		res = ParseResult()
 		tok = self.current_tok
@@ -1258,6 +1359,11 @@ class Parser:
 			class_def = res.register(self.class_def())
 			if res.error: return res
 			return res.success(class_def)
+		
+		elif tok.matches(TT_KEYWORD, 'tentar'):
+			try_expr = res.register(self.try_expr())
+			if res.error: return res
+			return res.success(try_expr)
 
 		elif tok.type == TT_LPAREN:
 			pos_start = tok.pos_start.copy()
@@ -3929,6 +4035,23 @@ class Interpreter:
 			context
 		))
 	
+	def visit_TryCatchNode(self, node, context):
+		res = RTResult()
+		try_result = res.register(self.visit(node.try_body, context))
+		if res.loop_should_break or res.loop_should_continue or res.func_return_value: return res
+
+		if not res.should_return():
+			return res.success(try_result)
+		
+		error_val = String(str(res.error.as_string())).set_context(context).set_pos(node.pos_start, node.pos_end)
+
+		res.reset()
+		context.symbol_table.set(node.catch_var_tok.value, error_val)
+		catch_result = res.register(self.visit(node.catch_body, context))
+		if res.should_return(): return res
+		
+		return res.success(catch_result)
+
 	def visit_CheckNode(self, node, context):
 		res = RTResult()
 
