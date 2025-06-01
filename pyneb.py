@@ -90,7 +90,7 @@ class RTError(Error):
 		pos = self.pos_start
 		ctx = self.context
 
-		while ctx:
+		while ctx and pos:
 			result = f'  Arquivo {pos.fn}, linha {str(pos.ln + 1)}, em {ctx.display_name}\n' + result
 			pos = ctx.parent_entry_pos
 			ctx = ctx.parent
