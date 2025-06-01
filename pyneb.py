@@ -208,6 +208,7 @@ KEYWORDS = [
 	'extende',
 	'super',
 	'tentar',
+	'comparar',
 	'caso'
 ]
 
@@ -523,6 +524,18 @@ class ClassNode:
 	
 	def __repr__(self):
 		return f'ClassNode({self.class_name_tok}, {self.body_node}, {self.inheritance})'
+
+class SwitchNode:
+	def __init__(self, expr_to_compare, cases, default_case, pos_start, pos_end):
+		self.expr_to_compare = expr_to_compare
+		self.cases = cases # [(val, body, is_block, pos_start)...]
+		self.default_case = default_case # (body, is_block, pos_start) or None
+
+		self.pos_start = pos_start
+		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f'SwitchNode({self.expr_to_compare}, {self.cases}, {self.default_case})'
 
 class CallNode:
 	def __init__(self, node_to_call, arg_nodes):
@@ -1269,6 +1282,109 @@ class Parser:
 		self.advance()
 
 		return res.success(TryCatchNode(try_body, catch_var_name, exception_body))
+	
+	def switch_expr(self):
+		res = ParseResult()
+		pos_start = self.current_tok.pos_start.copy()
+
+		if not self.current_tok.matches(TT_KEYWORD, 'comparar'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'comparar'"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		expr_to_compare = res.register(self.expr())
+		if res.error: return res
+
+		if self.current_tok.type != TT_NEWLINE:
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se nova linha"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		cases = []
+		default_case = None
+
+		while self.current_tok.matches(TT_KEYWORD, 'caso'):
+			case_start_pos = self.current_tok.pos_start.copy()
+			
+			res.register_advancement()
+			self.advance()
+
+			case_value = res.register(self.expr())
+			if res.error: return res
+
+			if not self.current_tok.matches(TT_KEYWORD, 'faça'):
+				return res.failure(InvalidSyntaxError(
+					self.current_tok.pos_start, self.current_tok.pos_end,
+					f"Esperava-se 'faça'"
+				))
+			
+			res.register_advancement()
+			self.advance()
+
+			if self.current_tok.type == TT_NEWLINE:
+				res.register_advancement()
+				self.advance()
+
+				body = res.register(self.statements())
+				if res.error: return res
+				cases.append((case_value, body, True, case_start_pos))
+			else:
+				expr = res.register(self.statement())
+				if res.error: return res
+				cases.append((case_value, expr, False, case_start_pos))
+
+		if self.current_tok.matches(TT_KEYWORD, 'senão'):
+			else_start_pos = self.current_tok.pos_start.copy()
+			res.register_advancement()
+			self.advance()
+
+			if not self.current_tok.matches(TT_KEYWORD, 'então'):
+				return res.failure(InvalidSyntaxError(
+					self.current_tok.pos_start, self.current_tok.pos_end,
+					f"Esperava-se 'então'"
+				))
+			
+			res.register_advancement()
+			self.advance()
+
+			if self.current_tok.type == TT_NEWLINE:
+				res.register_advancement()
+				self.advance()
+
+				statements = res.register(self.statements())
+				if res.error: return res
+				default_case = (statements, True, else_start_pos)
+			else:
+				expr = res.register(self.statement())
+				if res.error: return res
+				default_case = (expr, False, else_start_pos)
+			
+			
+
+		if not self.current_tok.matches(TT_KEYWORD, 'fim'):
+			return res.failure(InvalidSyntaxError(
+				self.current_tok.pos_start, self.current_tok.pos_end,
+				f"Esperava-se 'fim'"
+			))
+
+		res.register_advancement()
+		self.advance()
+
+		return res.success(SwitchNode(
+			expr_to_compare, 
+			cases, 
+			default_case,
+			pos_start,
+			self.current_tok.pos_end.copy()
+		))
 			
 	def atom(self):
 		res = ParseResult()
@@ -1364,6 +1480,11 @@ class Parser:
 			try_expr = res.register(self.try_expr())
 			if res.error: return res
 			return res.success(try_expr)
+		
+		elif tok.matches(TT_KEYWORD, 'comparar'):
+			switch_expr = res.register(self.switch_expr())
+			if res.error: return res
+			return res.success(switch_expr)
 
 		elif tok.type == TT_LPAREN:
 			pos_start = tok.pos_start.copy()
@@ -2539,7 +2660,7 @@ class Nulo(Value):
 		return Boolean(0).set_context(self.context), None
 	
 	def __repr__(self):
-		return "Nulo(null)"
+		return "Nulo"
 	
 	def __str__(self):
 		return "nulo"
@@ -2861,7 +2982,7 @@ class BaseFunction(Value):
 				self.context
 			))
 		
-		return res.success(None)
+		return res.success(Number.null)
 	
 	def populate_args(self, arg_names, args, exec_ctx):
 		for i in range(len(args)):
@@ -2878,7 +2999,7 @@ class BaseFunction(Value):
 		res.register(self.check_args(arg_names, args))
 		if res.should_return(): return res
 		self.populate_args(arg_names, args, exec_ctx)
-		return res.success(None)
+		return res.success(Number.null)
 	
 	def __repr__(self):
 		return f"<função {self.name} em {FILENAME}>"
@@ -3025,7 +3146,7 @@ class Function(BaseFunction):
 				return res.success(res.func_return_value)
 			return res
 
-		return res.success(value)
+		return res.success(value if value else Number.null)
 
 	def copy(self):
 		copy = Function(self.name, self.body_node, self.arg_names, self.should_auto_return, self.arg_defaults)
@@ -3210,10 +3331,23 @@ class BuiltInFunction(BaseFunction):
 	def execute_list_colocar(self, exec_ctx):
 		lst = self.obj
 		val = exec_ctx.symbol_table.get('value')
+		index = exec_ctx.symbol_table.get('index')
 
-		lst.elements.append(val)
-		return RTResult().success(val)
-	execute_list_colocar.arg_names = ['value']
+		if index.value == -1:
+			lst.elements.append(val)
+		else:
+			try:
+				lst.elements.insert(int(index.value), val)
+			except:
+				return RTResult().failure(RTError(
+					self.pos_start, self.pos_end,
+					f"Indice '{index}' fora do intervalo, index não existe.",
+					exec_ctx
+				))
+
+		return RTResult().success(lst)
+	execute_list_colocar.arg_names = ['value', 'index']
+	execute_list_colocar.default_args = [None, Number(-1)]
 
 	def execute_list_estourar(self, exec_ctx):
 		lst = self.obj
@@ -3249,18 +3383,45 @@ class BuiltInFunction(BaseFunction):
 	
 	def execute_número(self, exec_ctx):
 		if isinstance(exec_ctx.symbol_table.get('value'), Number):
-			return RTResult().success(Number(exec_ctx.symbol_table.get('value').value))
+			return RTResult().success(Boolean(1))
 		else:
 			return RTResult().success(Number.false)
 	execute_número.arg_names = ['value']
 	
-	def execute_string(self, exec_ctx):
-		return RTResult().success(String(exec_ctx.symbol_table.get('value').value) if not isinstance(exec_ctx.symbol_table.get('value'), List) else exec_ctx.symbol_table.get('value').elements)
-	execute_string.arg_names = ['value']
+	def execute_str(self, exec_ctx):
+		res = RTResult()
+		val = exec_ctx.symbol_table.get('value')
+
+		if isinstance(val, String):
+			return res.success(val)
+		elif isinstance(val, Number):
+			return res.success(String(str(val.value)))
+		elif isinstance(val, Boolean):
+			return res.success(String(str(val.value)))
+		elif isinstance(val, List):
+			return res.success(String(str(val.elements)))
+		elif isinstance(val, Dict):
+			return res.success(String(str(val.elements)))
+		elif isinstance(val, Tuple):
+			return res.success(String(str(val.elements)))
+		elif isinstance(val, Set):
+			return res.success(String(str(val.elements)))
+		elif isinstance(val, BaseFunction):
+			return res.success(String(str(val)))
+		elif isinstance(val, Nulo):
+			return res.success(String(str(val.value)))
+		else:
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				f"'{val}' não pode ser convertido para 'string'.",
+				exec_ctx
+			))
+
+	execute_str.arg_names = ['value']
 	
-	def execute_frase(self, exec_ctx):
-		return RTResult().success(Number(int(isinstance(exec_ctx.symbol_table.get('value'), String))))
-	execute_frase.arg_names = ['value']
+	def execute_string(self, exec_ctx):
+		return RTResult().success(Boolean(int(isinstance(exec_ctx.symbol_table.get('value'), String))))
+	execute_string.arg_names = ['value']
 
 	def execute_type(self, exec_ctx):
 		if isinstance(exec_ctx.symbol_table.get('value'), Number):
@@ -3291,11 +3452,11 @@ class BuiltInFunction(BaseFunction):
 	execute_type.arg_names = ['value']
 	
 	def execute_lista(self, exec_ctx):
-		return RTResult().success(Number(int(isinstance(exec_ctx.symbol_table.get('value'), List))))
+		return RTResult().success(Boolean(int(isinstance(exec_ctx.symbol_table.get('value'), List))))
 	execute_lista.arg_names = ['value']
 	
 	def execute_func(self, exec_ctx):
-		return RTResult().success(Number(int(isinstance(exec_ctx.symbol_table.get('value'), Function))))
+		return RTResult().success(Boolean(int(isinstance(exec_ctx.symbol_table.get('value'), Function))))
 	execute_func.arg_names = ['value']
 
 	def execute_string_picotar(self, exec_ctx):
@@ -4035,6 +4196,32 @@ class Interpreter:
 			context
 		))
 	
+	def visit_SwitchNode(self, node, context):
+		res = RTResult()
+		
+		value_to_compare = res.register(self.visit(node.expr_to_compare, context))
+		if res.should_return(): return res
+
+		for case_value, body_node, is_block, _ in node.cases:
+			case_val = res.register(self.visit(case_value, context))
+			if res.should_return(): return res
+
+			result, error = value_to_compare.get_comparison_eq(case_val)
+			if error: return res.failure(error)
+			
+			if result.is_true():
+				body_value = res.register(self.visit(body_node, context))
+				if res.should_return(): return res
+				return res.success(body_value)
+
+		if node.default_case:
+			default_body, is_block, _ = node.default_case
+			default_value = res.register(self.visit(default_body, context))
+			if res.should_return(): return res
+			return res.success(default_value)
+
+		return res.success(Number.null)
+	
 	def visit_TryCatchNode(self, node, context):
 		res = RTResult()
 		try_result = res.register(self.visit(node.try_body, context))
@@ -4415,13 +4602,16 @@ class Interpreter:
 		res = RTResult()
 		values = []
 
-		for value_node in node.node_to_return:
-			values.append(res.register(self.visit(value_node, context)))
-			if res.should_return(): return res
+		if node.node_to_return and node.node_to_return != [None]:
+			for value_node in node.node_to_return:
+				values.append(res.register(self.visit(value_node, context) if value_node else Nulo().set_context(context).set_pos(node.pos_start, node.pos_end)))
+				if res.should_return(): return res
 
-		return_value = List(values) if len(values) > 1 else values[0] if values else Number.null
+			return_value = List(values) if len(values) > 1 else values[0] if values else Number.null
 
-		return res.success_return(return_value)
+			return res.success_return(return_value)
+		else:
+			return res.success_return(Nulo().set_context(context).set_pos(node.pos_start, node.pos_end))
 	
 	def visit_ContinueNode(self, node, context):
 		return RTResult().success_continue()
@@ -4444,9 +4634,9 @@ global_symbol_table.set("número", BuiltInFunction("número"), True)
 global_symbol_table.set("raiz", BuiltInFunction("raiz"), True)
 global_symbol_table.set("cubo", BuiltInFunction("cubo"), True)
 global_symbol_table.set("quadrado", BuiltInFunction("quadrado"), True)
-global_symbol_table.set("string", BuiltInFunction("string"), True)
+global_symbol_table.set("str", BuiltInFunction("str"), True)
 global_symbol_table.set("len", BuiltInFunction("len"), True)
-global_symbol_table.set("frase", BuiltInFunction("frase"), True)
+global_symbol_table.set("é_string", BuiltInFunction("string"), True)
 global_symbol_table.set("picotar", BuiltInFunction("picotar"), True)
 global_symbol_table.set("lista", BuiltInFunction("lista"), True)
 global_symbol_table.set("func", BuiltInFunction("func"), True)
