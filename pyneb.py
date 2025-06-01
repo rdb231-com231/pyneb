@@ -75,8 +75,8 @@ class CheckError(Error):
 		super().__init__(pos_start, pos_end, 'Erro Conferindo Informações', details)
 
 class RTError(Error):
-	def __init__(self, pos_start, pos_end, details, context):
-		super().__init__(pos_start, pos_end, 'Runtime Error', details)
+	def __init__(self, pos_start, pos_end, details, context, name=None):
+		super().__init__(pos_start, pos_end, name or 'Runtime Error', details)
 		self.context = context
 
 	def as_string(self):
@@ -96,6 +96,12 @@ class RTError(Error):
 			ctx = ctx.parent
 
 		return '\nErro Encontrado (Chamada mais recente):\n' + result + ""
+
+class ValorError(RTError):
+	def __init__(self, pos_start, pos_end, details, context):
+		super().__init__(pos_start, pos_end, details, context, 'Erro de Valor')
+
+
 
 #######################################
 # POSITION
@@ -2566,10 +2572,10 @@ class Number(Value):
 		return copy
 	
 	def __repr__(self):
-		return f"'{str(self.value)}'"
+		return str(self.value)
 
 	def __str__(self):
-		return str(self.value)
+		return repr(self)
 
 class Boolean(Value):
 	def __init__(self, value: Literal["verdadeiro", "falso", 1, 0]):
@@ -2850,10 +2856,10 @@ class List(Value):
 		copy.set_context(self.context)
 		return copy
 	def __str__(self):
-		return f'{", ".join([str(x) for x in self.elements])}'
+		return f'{", ".join([repr(x) for x in self.elements])}'
 	
 	def __repr__(self):
-		return f'[{", ".join([str(x) for x in self.elements])}]'
+		return f'[{", ".join([repr(x) for x in self.elements])}]'
 
 class Tuple(Value):
 	def __init__(self, elements):
@@ -3382,11 +3388,39 @@ class BuiltInFunction(BaseFunction):
 	execute_input_int.arg_names = ['prompt']
 	
 	def execute_número(self, exec_ctx):
+		value = exec_ctx.symbol_table.get('value')
+
+		if isinstance(value, Number):
+			return RTResult().success(value)
+		elif isinstance(value, (String, Boolean, Nulo)):
+			try:
+				return RTResult().success(Number(int(value.value)))
+			except ValueError:
+				return RTResult().failure(ValorError(
+					self.pos_start, self.pos_end,
+					f"'{value}' não pode ser convertido para número.",
+					exec_ctx
+				))
+		elif isinstance(value, (List, Dict, Tuple, Set)):
+			return RTResult().failure(ValorError(
+				self.pos_start, self.pos_end,
+				f"'{value}' não pode ser convertido para número.",
+				exec_ctx
+			))
+		else:
+			return RTResult().failure(ValorError(
+				self.pos_start, self.pos_end,
+				f"'{value}' não pode ser convertido para número.",
+				exec_ctx
+			))
+	execute_número.arg_names = ['value']
+
+	def execute_num(self, exec_ctx):
 		if isinstance(exec_ctx.symbol_table.get('value'), Number):
 			return RTResult().success(Boolean(1))
 		else:
 			return RTResult().success(Number.false)
-	execute_número.arg_names = ['value']
+	execute_num.arg_names = ['value']
 	
 	def execute_str(self, exec_ctx):
 		res = RTResult()
@@ -3762,6 +3796,32 @@ class BuiltInFunction(BaseFunction):
 	execute_esperar.arg_names = ["time"]
 	execute_esperar.default_args = [Number(1)]
 
+	def execute_bomba_exit(self, exec_ctx):
+		res = RTResult()
+		sys.exit(exec_ctx.symbol_table.get('value'))
+	execute_bomba_exit.arg_names = ['value']
+	execute_bomba_exit.default_args = [Number(0)]
+
+	def execute_list_map(self, exec_ctx):
+		res = RTResult()
+		lista = self.obj
+		func = exec_ctx.symbol_table.get('func')
+
+		if not isinstance(func, BaseFunction):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma função",
+				exec_ctx
+			))
+
+		self.obj.elements = ([func.set_context(exec_ctx).execute([arg]).value for arg in lista.elements.copy()])
+		if res.should_return(): return res
+		return res.success(self.obj)
+
+	execute_list_map.arg_names = ['func']
+
+
+
 #######################################
 # CONTEXT
 #######################################
@@ -4058,7 +4118,7 @@ class Interpreter:
 					context
 				))
 		elif isinstance(obj, List):
-			if attr_name in ["invertida", "procurar", "colocar", "estourar", "extender", "mudar"]:
+			if attr_name in ["invertida", "procurar", "colocar", "map", "estourar", "extender", "mudar"]:
 				func = BuiltInFunction(f"list_{attr_name}")
 				func.obj = obj
 				func.set_context(context)
@@ -4630,13 +4690,14 @@ global_symbol_table.set("pegar", BuiltInFunction("pegar"), True)
 global_symbol_table.set("perguntar", BuiltInFunction("perguntar"), True)
 global_symbol_table.set("input_int", BuiltInFunction("input_int"), True)
 global_symbol_table.set("extender", BuiltInFunction("extender"), True)
-global_symbol_table.set("número", BuiltInFunction("número"), True)
+global_symbol_table.set("int", BuiltInFunction("número"), True)
 global_symbol_table.set("raiz", BuiltInFunction("raiz"), True)
 global_symbol_table.set("cubo", BuiltInFunction("cubo"), True)
 global_symbol_table.set("quadrado", BuiltInFunction("quadrado"), True)
 global_symbol_table.set("str", BuiltInFunction("str"), True)
 global_symbol_table.set("len", BuiltInFunction("len"), True)
 global_symbol_table.set("é_string", BuiltInFunction("string"), True)
+global_symbol_table.set("é_número", BuiltInFunction("num"), True)
 global_symbol_table.set("picotar", BuiltInFunction("picotar"), True)
 global_symbol_table.set("lista", BuiltInFunction("lista"), True)
 global_symbol_table.set("func", BuiltInFunction("func"), True)
@@ -4654,6 +4715,7 @@ global_symbol_table.set("eval", BuiltInFunction("eval"), True)
 global_symbol_table.set("python", BuiltInFunction("python"), True)
 global_symbol_table.set("update", BuiltInFunction("update"), True)
 global_symbol_table.set("esperar", BuiltInFunction("esperar"), True)
+global_symbol_table.set("bomba_nuclear_universal", BuiltInFunction("bomba_exit"), True)
 
 def run(fn, text):
 	

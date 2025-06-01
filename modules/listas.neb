@@ -1,4 +1,5 @@
 #modules/listas.neb
-função elemento usando (listinha: lista[qualquer])
+função elemento usando (listinha)
+    conferir tipo(listinha) == "lista"
     retornar listinha[aleatório(0, len(listinha) - 1)]
 fim

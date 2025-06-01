@@ -1,10 +1,10 @@
 # module/stdlibs.neb
 
 função max usando(list)
-    conferir type(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
+    conferir tipo(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
     declarar maior => 0
     para cada value em list faça
-        conferir type(value) == "número" detalhes "Esperava-se um número, não ${type(value)} (${value})"
+        conferir tipo(value) == "número" detalhes "Esperava-se um número, não ${tipo(value)} (${value})"
         se value > maior então
             maior = value
         fim
@@ -13,10 +13,10 @@ função max usando(list)
 fim
 
 função min usando(list)
-    conferir type(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
+    conferir tipo(list) == "lista" usando "Invalid Argument" detalhes "Esperava-se uma lista"
     declarar menor => pegar(list, 0)
     para cada value em list faça
-        conferir type(value) == "número" detalhes "Esperava-se um número, não " + type(value)
+        conferir tipo(value) == "número" detalhes "Esperava-se um número, não " + tipo(value)
         se value < menor então
             menor = value
         fim
@@ -25,27 +25,27 @@ função min usando(list)
 fim
 
 função soma usando(list)
-    conferir type(list) == "lista" usando "Argumento Inválido" detalhes "Esperava-se uma lista, não " + type(list)
+    conferir tipo(list) == "lista" usando "Argumento Inválido" detalhes "Esperava-se uma lista, não " + type(list)
     declarar resultado => 0
     para cada item em list faça
-        conferir type(item) == "número"
+        conferir tipo(item) == "número"
         resultado += item
     fim
     retornar resultado
 fim
 
 função média usando(list)
-    conferir type(list) == "lista" usando "Argumento Inválido" detalhes "Esperava-se uma lista, não " + type(list)
+    conferir tipo(list) == "lista" usando "Argumento Inválido" detalhes "Esperava-se uma lista, não " + type(list)
     declarar res => 0
     para cada item em list faça
-        conferir type(item) == "número"
+        conferir tipo(item) == "número"
         res += item
     fim
     retornar res / len(list)
 fim
 
 função map usando (fun, list)
-    conferir type(fun) == "função" e type(list) == "lista"
+    conferir tipo(fun) == "função" e type(list) == "lista"
     nova_lista = []
     para cada item em list faça
         nova_lista.colocar(fun(item))

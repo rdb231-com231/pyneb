@@ -1,0 +1,11 @@
+# NEB 1.3.5
+função fib usando (n) 
+    se n <= 1 então
+        retornar n
+    senão
+        retornar fib(n - 1) + fib(n - 2)
+    fim
+fim
+
+# NEB 1.4.5
+função fib usando (n = 0) => se n <= 1 então n senão fib(n - 1) + fib(n - 2)

@@ -1,0 +1,22 @@
+# NEB 1.4.0
+
+função map usando (fun, list)
+    conferir tipo(fun) == "função" e type(list) == "lista"
+    nova_lista = []
+    para cada item em list faça
+        nova_lista.colocar(fun(item))
+    fim
+    retornar nova_lista
+fim
+
+# EXEMPLO:
+função somar_mais_um usando (x) 
+    retornar x + 1
+fim
+
+declarar nums = [10, 20, 30]
+falar(map(somar_mais_um, nums))
+
+# NEB 1.4.5
+declarar nums = [1, 2, 3]
+nums.map(função (n) => n + 1)

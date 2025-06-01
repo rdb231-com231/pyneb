@@ -1,6 +1,3 @@
-# modules/math.neb
-
-
 função fatorial usando(n)
     conferir tipo(n) == "número" usando "Tipo Inválido" detalhes "Deve ser um número"
     conferir n >= 0 usando "Valor Inválido" detalhes "Número deve ser positivo"
@@ -11,5 +8,3 @@ função fatorial usando(n)
     fim
     retornar resultado
 fim
-
-declarar constante pi = 3.141592653589793
