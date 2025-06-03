@@ -1,0 +1,8 @@
+# NEB 1.4.0
+função plural usando (n) => str(n) + "s"
+declarar frases = ["carro", "loja", "multa"]
+declarar res = para cada item em frases faça plural(item) # ["carros", "lojas", "multas"]
+
+# NEB 1.4.5
+declarar res = frases.map(plural) # ["carros", "lojas", "multas"]
+# frases.map() também muda frases, não só res.

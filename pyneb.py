@@ -25,7 +25,7 @@ FILENAME = ''
 ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.neb')]
 
 DEFAULT_CONFIG = {
-	'version': "1.4.5",
+	'version': "1.5.0",
 	'author': 'mewplush',
 	'publisher': 'mewplush',
 	'interpreter': 'pyneb',
@@ -2385,7 +2385,12 @@ class RTResult:
 #######################################
 
 class Value:
+	executable = False
+	properties = {}
+
 	def __init__(self):
+		self.executable = False
+		self.properties = {}
 		self.set_pos()
 		self.set_context()
 
@@ -2565,10 +2570,10 @@ class Number(Value):
 		return Boolean(0).set_context(self.context), None
 	
 	def copy(self):
-		
 		copy = Number(self.value)
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.set_context(self.context)
+		copy.properties = self.properties
 		return copy
 	
 	def __repr__(self):
@@ -2591,6 +2596,7 @@ class Boolean(Value):
 		copy = Boolean(self.value)
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.set_context(self.context)
+		copy.properties = self.properties
 		return copy
 
 	def get_comparison_eq(self, other):
@@ -2636,6 +2642,7 @@ class Nulo(Value):
 		copy = Nulo()
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.set_context(self.context)
+		copy.properties = self.properties
 		return copy
 	
 	def is_true(self):
@@ -2680,6 +2687,7 @@ class Set(Value):
 		copy = Set(self.elements)
 		copy.set_context(self.context)
 		copy.set_pos(self.pos_start, self.pos_end)
+		copy.properties = self.properties
 		return copy
 	
 	def is_true(self):
@@ -2781,6 +2789,7 @@ class String(Value):
 		copy = String(self.value)
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.set_context(self.context)
+		copy.properties = self.properties
 		return copy
 
 	def is_true(self):
@@ -2854,6 +2863,7 @@ class List(Value):
 		copy = List(self.elements)
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.set_context(self.context)
+		copy.properties = self.properties
 		return copy
 	def __str__(self):
 		return f'{", ".join([repr(x) for x in self.elements])}'
@@ -2899,6 +2909,7 @@ class Tuple(Value):
 		new_tup = Tuple(self.elements)
 		new_tup.set_pos(self.pos_start, self.pos_end)
 		new_tup.set_context(self.context)
+		new_tup.properties = self.properties
 		return new_tup
 
 	def __repr__(self):
@@ -2927,6 +2938,7 @@ class Dict(Value):
 		copy = Dict([(k, v.copy()) for k, v in self.elements])
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.set_context(self.context)
+		copy.properties = self.properties
 		return copy
 	
 	def __str__(self):
@@ -2964,6 +2976,7 @@ class Dict(Value):
 class BaseFunction(Value):
 	def __init__(self, name):
 		super().__init__()
+		self.executable = True
 		self.name = name or "<anônima>"
 	
 	def generate_new_context(self):
@@ -3040,6 +3053,7 @@ class Class(BaseFunction):
 		copy.symbol_table = self.symbol_table
 		copy.set_context(self.context)
 		copy.set_pos(self.pos_start, self.pos_end)
+		copy.properties = self.properties
 		return copy
 
 	def __str__(self):
@@ -3077,6 +3091,7 @@ class Instance(Value):
 		copy.symbol_table = self.symbol_table
 		copy.set_context(self.context)
 		copy.set_pos(self.pos_start, self.pos_end)
+		copy.properties = self.properties
 		return copy
 	
 	def execute(self, args):
@@ -3159,6 +3174,7 @@ class Function(BaseFunction):
 		copy.set_context(self.context)
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.obj = self.obj
+		copy.properties = self.properties
 		return copy
 
 class BuiltInFunction(BaseFunction):
@@ -3204,6 +3220,7 @@ class BuiltInFunction(BaseFunction):
 		copy.set_context(self.context)
 		copy.set_pos(self.pos_start, self.pos_end)
 		copy.obj = self.obj
+		copy.properties = self.properties
 		return copy
 
 	def __repr__(self):
@@ -3820,6 +3837,15 @@ class BuiltInFunction(BaseFunction):
 
 	execute_list_map.arg_names = ['func']
 
+	def execute_any_is_callable(self, exec_ctx):
+		return RTResult().success(Number.true if self.obj.executable else Number.false)
+	execute_any_is_callable.arg_names = []
+	
+	def execute_is_callable(self, exec_ctx):
+		return RTResult().success(Number.true if (exec_ctx.symbol_table.get('value').executable) else Number.false)
+
+	execute_is_callable.arg_names = ['value']
+
 
 
 #######################################
@@ -3901,6 +3927,7 @@ class SymbolTable:
 		copy.symbols = self.symbols.copy()
 		copy.parent = self.parent
 		copy.constants = self.constants.copy()
+		copy.properties = self.properties
 		return copy
 
 	def remove(self, name):
@@ -4099,6 +4126,12 @@ class Interpreter:
 
 		attr_name = node.attr_name_tok.value
 
+		if attr_name == "pode_executar":
+			func = BuiltInFunction("any_is_callable")
+			func.obj = obj
+			func.set_context(context)
+			return res.success(func)
+
 		if isinstance(obj, Dict):
 			if attr_name in ["chaves", "valores", "itens", "mudar", "extender"]:
 				if attr_name == "chaves": attr_name = "keys"
@@ -4124,6 +4157,8 @@ class Interpreter:
 				func.set_context(context)
 				return res.success(func)
 			else:
+				if attr_name in obj.properties:
+					return res.success(obj.properties[attr_name].copy())
 				return res.failure(RTError(
 					node.pos_start, node.pos_end,
 					f"Atributo '{attr_name}' para listas não encontrado, talvez tenha confudido com os métodos de dicionários?",
@@ -4136,6 +4171,8 @@ class Interpreter:
 				func.set_context(context)
 				return res.success(func)
 			else:
+				if attr_name in obj.properties:
+					return res.success(obj.properties[attr_name].copy())
 				return res.failure(RTError(
 					node.pos_start, node.pos_end,
 					f"Atributo '{attr_name}' para strings não encontrado, talvez tenha confudido com os métodos de dicionários?",
@@ -4148,6 +4185,9 @@ class Interpreter:
 			if isinstance(value, Function):
 				value.set_obj(inst)
 			return res.success(value)
+		else:
+			if attr_name in obj.properties:
+				return res.success(obj.properties[attr_name].copy())
 		
 
 		return res.failure(RTError(
@@ -4180,12 +4220,9 @@ class Interpreter:
 			if not found:
 				obj.elements.append((String(attr_name), value))
 			return res.success(value)
-		
-		return res.failure(RTError(
-			node.pos_start, node.pos_end,
-			"Attribute assignment only supported for class instances and dictionaries",
-			context
-		))
+		else:
+			obj.properties[attr_name] = value
+			return res.success(value)
 	
 	def visit_ArrayAccessNode(self, node, context):
 		res = RTResult()
@@ -4357,7 +4394,7 @@ class Interpreter:
 		module_name = file_path.value
 		
 		current_dir = sys.path[0]
-		full_path = os.path.join(current_dir, 'modules', f'{module_name}.neb')
+		full_path = os.path.join(current_dir, 'modules', f'{module_name}.modneb')
 		if not os.path.exists(full_path):
 			full_path = os.path.join(current_dir, f'../{module_name}.neb')
 		
@@ -4716,6 +4753,7 @@ global_symbol_table.set("python", BuiltInFunction("python"), True)
 global_symbol_table.set("update", BuiltInFunction("update"), True)
 global_symbol_table.set("esperar", BuiltInFunction("esperar"), True)
 global_symbol_table.set("bomba_nuclear_universal", BuiltInFunction("bomba_exit"), True)
+global_symbol_table.set("pode_executar", BuiltInFunction("is_callable"), True)
 
 def run(fn, text):
 	

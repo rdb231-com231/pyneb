@@ -1,7 +1,7 @@
 # NEB 1.4.0
 
 função map usando (fun, list)
-    conferir tipo(fun) == "função" e type(list) == "lista"
+    conferir tipo(fun) == "função" e tipo(list) == "lista"
     nova_lista = []
     para cada item em list faça
         nova_lista.colocar(fun(item))
@@ -20,3 +20,15 @@ falar(map(somar_mais_um, nums))
 # NEB 1.4.5
 declarar nums = [1, 2, 3]
 nums.map(função (n) => n + 1)
+
+
+# NEB 1.5.0
+# MAP PARA SETS
+importar map de "stdlibs"
+declarar set = {10, 20, 30}
+set.map = função (fun) => (para cada item em set faça item).map(fun) # transforma mesa em lista
+# {10, 20, 30} -> iterable
+# para cada item em set faça item -> o resultado de um 'para cada' é sempre uma lista
+
+falar(set.map(função (n) => n + 1))
+# função map para sets :)

@@ -1,0 +1,9 @@
+declarar idade = perguntar("Qual sua idade? ")
+conferir é_número(idade) 
+
+# NEB 1.3.5
+declarar permitido = se idade > 18 então 1 senão 0 # números 1 ou 0, não booleans.
+
+# NEB 1.4.5
+declarar permitido = idade > 18 # verdadeiro ou falso
+tipo(permitido) # boolean

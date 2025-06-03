@@ -69,8 +69,8 @@ while True:
             for i in f.read().split(';'):
                 if i.startswith('access_point_main'):
                     filename = i.split('=')[1]
-                    if filename == 'not-defined':
-                        print("Parece que um arquivo principal não foi definido, use nebula setmain <arquivo> para definir um arquivo principal.")
+                    if filename == '\'not-defined\'':
+                        cprint("Parece que um arquivo principal não foi definido, use nebula setmain <arquivo> para definir um arquivo principal.", 'yellow', attrs=['dark', 'bold']);
                         break
         if not filename.endswith('.neb'):
             filename += '.neb'
@@ -84,7 +84,7 @@ while True:
                 _, error, ctx = pyneb.run(filename, text)
                 if error: cprint(error.as_string(), 'red', attrs=['dark', 'bold']); break
         except FileNotFoundError:
-            cprint(f"File {filename} not found. Please use command: \"nebula <filename>\"", 'cyan', attrs=['dark', 'bold'])
+            cprint(f"Arquivo {filename} não encontrado. Favor usar comando: \"nebula <filename>\" ou \"nebula setmain <filename>\"", 'cyan', attrs=['dark', 'bold'])
             break
     
     elif sys.argv[1] in ('--config', '-c'):
@@ -114,8 +114,10 @@ while True:
     else:
         if not sys.argv[1].endswith('.neb'):
             sys.argv[1] += '.neb'
-        if not sys.argv[1].startswith('../'):
+        if not sys.argv[1].startswith('../') and not sys.argv[1].startswith('pyneb/src/'):
             sys.argv[1] = '../' + sys.argv[1]
+        if sys.argv[1].startswith('pyneb/src/'):
+            sys.argv[1] = sys.argv[1].replace('pyneb/src/', '')
         
         try:
             with open(sys.argv[1], 'r', encoding='utf-8') as f:

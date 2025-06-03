@@ -45,7 +45,7 @@ função média usando(list)
 fim
 
 função map usando (fun, list)
-    conferir tipo(fun) == "função" e type(list) == "lista"
+    conferir tipo(fun) == "função" e tipo(list) == "lista"
     nova_lista = []
     para cada item em list faça
         nova_lista.colocar(fun(item))
