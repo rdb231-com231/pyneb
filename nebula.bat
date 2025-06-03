@@ -1,4 +1,4 @@
 @echo off
 
 title Nebula - NebPY
-python3 shell.py %~1 %~2
+py shell.py %~1 %~2

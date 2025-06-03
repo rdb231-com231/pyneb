@@ -12,9 +12,8 @@ except IndexError:
     sys.exit(1)
 
 while True:
-
+    cprint("\nLembre-se: nebula.bat pode não identificar seu python corretamente! Tente trocar Python3 por Python ou só py antes de re-instalar qualquer coisa!\n", 'red', attrs=['bold'])
     if sys.argv[1] == '__shell__':
-
         cprint("Nebula Shell", 'blue', attrs=["bold", "underline", "blink"])
         print('\n')
         cprint("Enter 'exit' to exit the shell.", 'green')

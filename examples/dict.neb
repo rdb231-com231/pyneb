@@ -1,0 +1,18 @@
+classe dict
+    # elementos devem ser [(k, v)...]
+
+    função principal usando (esse, nome, elementos = [])
+        esse.name = nome
+        esse.elementos = elementos
+    fim
+
+    função get usando (esse, name, default=nulo)
+        para cada nome, valor em esse.elementos faça
+            se name == nome então retornar valor
+        fim
+        retornar default
+    fim
+fim
+
+declarar pessoa = dict("pessoa", [("nome", "Paulo"), ("idade", 24)])
+falar(pessoa.get("nome"))

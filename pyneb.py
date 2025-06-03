@@ -19,7 +19,7 @@ import time
 
 DIGITS = '0123456789'
 LETTERS = string.ascii_letters
-LETTERS += 'áéíóúãâêôãõçÁÉÍÓÚÃÂÊÔÃÕÇ'	
+LETTERS += 'áéíóúãâêôãõçÁÉÍÓÚÃÂÊÔÃÕÇ_'	
 LETTERS_DIGITS = LETTERS + DIGITS
 FILENAME = ''
 ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.neb')]
@@ -246,6 +246,7 @@ class Token:
 
 class Lexer:
 	def __init__(self, fn, text):
+		sys.setrecursionlimit(3000)
 		self.fn = fn
 		self.text = text
 		self.pos = Position(-1, 0, -1, fn, text)
@@ -2445,20 +2446,21 @@ class Value:
 	def notted(self):
 		return Boolean(int(0 if self.is_true() else 1)).set_context(self.context), None
 	
-	def included_in(self):
-		return None, self.illegal_operation()
+	def included_in(self, other):
+		return None, self.illegal_operation(other)
 
 	def execute(self, args):
 		return RTResult().failure(self.illegal_operation(exec_=True))
 
 	def copy(self):
-		raise Exception('Nenhum copy() metódo encontrado')
+		raise Exception('Nenhum ".copy()" metódo encontrado -> relatar esse erro ao dev.')
 
 	def is_true(self):
 		return False
 
 	def illegal_operation(self, other=None, exec_=None):
 		if not other: other = self
+		if not other.pos_end: other.pos_end = self.pos_end
 		if exec_:
 			return RTError(
 				self.pos_start, other.pos_end,
@@ -2467,7 +2469,7 @@ class Value:
 			)
 		return RTError(
 			self.pos_start, other.pos_end,
-			f'Operação Ilegal entre {self} e {other}',
+			f'Operação Ilegal entre {repr(self)} e {repr(other)}',
 			self.context
 		)
 
@@ -2490,14 +2492,17 @@ class Number(Value):
 	def added_to(self, other):
 		if isinstance(other, Number):
 			return Number(self.value + other.value).set_context(self.context), None
+		return super().added_to(other)
 
 	def subbed_by(self, other):
 		if isinstance(other, Number):
 			return Number(self.value - other.value).set_context(self.context), None
+		return super().added_to(other)
 
 	def multed_by(self, other):
 		if isinstance(other, Number):
 			return Number(self.value * other.value).set_context(self.context), None
+		return super().added_to(other)
 
 	def dived_by(self, other):
 		if isinstance(other, Number):
@@ -2509,6 +2514,7 @@ class Number(Value):
 				)
 
 			return Number(self.value / other.value).set_context(self.context), None
+		return super().added_to(other)
 
 	def powed_by(self, other):
 		if isinstance(other, Number):
@@ -2628,7 +2634,7 @@ class Boolean(Value):
 		return 1 if self.value == 'verdadeiro' else 0
 	
 	def __repr__(self):
-		return f"Boolean({str(self.value)})"
+		return str(self)
 	
 	def __str__(self):
 		return str(self.value)
@@ -2694,25 +2700,24 @@ class Set(Value):
 		return True
 	
 	def get_comparison_eq(self, other):
-		return Boolean(int(self.elements == other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+		return Boolean(int(self.elements == other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end), None
 	
 	def get_comparison_ne(self, other):
-		return Boolean(int(self.elements != other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+		return Boolean(int(self.elements != other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end), None
 	
 	def get_comparison_eq(self, other):
-		return Boolean(int(self.elements == other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+		return Boolean(int(self.elements == other.elements)).set_context(self.context).set_pos(self.pos_start, self.pos_end), None
 	
 	def anded_by(self, other):
-		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+		return Boolean(int(self.is_true() and other.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end), None
 
 	def ored_by(self, other):
-		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+		return Boolean(int(self.is_true() or other.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end), None
 	
 	def notted(self):
-		return Boolean(int(not self.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end)
+		return Boolean(int(not self.is_true())).set_context(self.context).set_pos(self.pos_start, self.pos_end), None
 	
 	def included_in(self, other):
-
 		if isinstance(other, (List, Set, Tuple)):
 			for elem in other.elements:
 				if isinstance(elem, Set) and [str(x) for x in elem.elements] == [str(x) for x in self.elements]:
@@ -4487,6 +4492,8 @@ class Interpreter:
 	def visit_IfNode(self, node, context):
 		res = RTResult()
 
+		expr_value = Number.null
+
 		for condition, expr, should_return_null in node.cases:
 			condition_value = res.register(self.visit(condition, context))
 			if res.should_return(): return res
@@ -4499,6 +4506,7 @@ class Interpreter:
 		if node.else_case:
 			expr, should_return_null = node.else_case
 			expr_value = res.register(self.visit(expr, context))
+		
 		if res.should_return(): return res
 		return res.success(Number.null if should_return_null else expr_value)
 
