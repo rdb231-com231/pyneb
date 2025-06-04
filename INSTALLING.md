@@ -1,10 +1,10 @@
 # Instalando PyNeb
 
-- [Download PyNeb Orion 1.3.5](https://github.com/rdb231-com231/pyneb/releases/tag/orion-1.0.0-alpha)
+- [Download PyNeb Orion 1.5.0](https://github.com/rdb231-com231/pyneb/releases/tag/orion-1.0.0-alpha)
 
 - [Extensão Download VSNeb](https://github.com/rdb231-com231/vsnebula/releases/tag/Base)
 
-## PyNeb Orion 1.3.5
+## PyNeb Orion 1.5.0
 Instale o instalador `pyneb_installer.exe` e execute ele. 
 Baixe o arquivo em um local como `C:\Users\usuário\Documentos\Nebula\pyneb`.
 Após, inicie sua `IDE` (nesse tutorial usaremos VS Code) e crie um arquivo chamado `main.neb` uma pasta antes do `pyneb`, no caso desse tutorial: `Documentos\Nebula`.
@@ -18,4 +18,4 @@ No seu `CMD (Command Prompt)` escreva `nebula -v` para conferir a ***`versão`**
 
 > Autor: MewPlush
 
-> Versão: 1.3.2.
+> Versão: 1.5.0

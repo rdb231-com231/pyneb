@@ -22,7 +22,7 @@ LETTERS = string.ascii_letters
 LETTERS += 'áéíóúãâêôãõçÁÉÍÓÚÃÂÊÔÃÕÇ_'	
 LETTERS_DIGITS = LETTERS + DIGITS
 FILENAME = ''
-ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.neb')]
+ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.modneb')]
 
 DEFAULT_CONFIG = {
 	'version': "1.5.0",
@@ -856,6 +856,16 @@ class ImportNode:
 	def __repr__(self):
 		return f'ImportNode({self.file_path}, {self.functions})'
 
+class ImportNamespaceNode:
+	def __init__(self, module_path, pos_start, pos_end):
+		self.module_path = module_path
+		
+		self.pos_start = pos_start
+		self.pos_end = pos_end
+	
+	def __repr__(self):
+		return f'ImportNamespaceNode({self.module_path})'
+
 #######################################
 # PARSE RESULT
 #######################################
@@ -1063,17 +1073,19 @@ class Parser:
 				self.advance(res)
 
 			if not self.current_tok.matches(TT_KEYWORD, 'de'):
-				return res.failure(InvalidSyntaxError(
-					self.current_tok.pos_start, self.current_tok.pos_end,
-					"Esperava-se 'de'"
-				))
+				if len(functions) > 1:
+					return res.failure(InvalidSyntaxError(
+						self.current_tok.pos_start, self.current_tok.pos_end,
+						"Esperava-se 'de' para importar mais de uma função"
+					))
+				return res.success(ImportNamespaceNode(functions[0], pos_start, self.current_tok.pos_start.copy()))
 			
 			self.advance(res)
 			
-			if not self.current_tok.type == TT_STRING:
+			if not self.current_tok.type == TT_IDENTIFIER:
 				return res.failure(InvalidSyntaxError(
 					self.current_tok.pos_start, self.current_tok.pos_end,
-					"Esperava-se uma string"
+					"Esperava-se um identificador"
 				))
 			
 			module_path = self.current_tok
@@ -4016,6 +4028,7 @@ class Interpreter:
 		
 		class_context = Context(class_value.name, parent=context)
 		class_context.symbol_table = class_value.symbol_table
+		class_value.set_context(class_context)
 
 		res.register(self.visit(node.body_node, class_context))
 		if res.error: return res
@@ -4450,6 +4463,63 @@ class Interpreter:
 			context.symbol_table.set(func_name, func_value, func_const)
 		
 		return res.success(Number.null)
+	
+	def visit_ImportNamespaceNode(self, node: ImportNamespaceNode, context):
+		res = RTResult()
+		module_name = node.module_path.value
+		pos_start = node.pos_start
+
+		module_paths = [
+			os.path.join(os.path.dirname(FILENAME)),
+			os.path.join(sys.path[0], 'modules'),
+			os.getcwd()
+		]
+
+
+		found = False
+		
+		if module_name + '.modneb' in ALL_MODULES:
+			full_path = os.path.join(os.path.join(sys.path[0], 'modules'), f'{module_name}.modneb')
+			found = True
+		else:
+			for path in module_paths:
+				full_path = os.path.join(path, f'{module_name}.neb')
+				if os.path.exists(full_path):
+					found = True
+					break
+		
+		if not found:
+			return res.failure(RTError(
+				pos_start, node.pos_end,
+				f"Módulo '{module_name}' não encontrado",
+				context
+			))
+
+		# pegar o contexto
+		with open(full_path, 'r', encoding='utf-8') as f:
+			script = f.read()
+		
+		module_context = Context(f"<módulo {module_name}>")
+		module_context.symbol_table = SymbolTable(global_symbol_table)
+		
+		_, error, module_context = run(full_path, script)
+		if error:
+			return res.failure(error)
+		
+		# criar namespace
+		namespace = Dict([]).set_context(context).set_pos(pos_start, node.pos_end)
+		for name in module_context.symbol_table.symbols:
+			if not module_context.symbol_table.is_private(name):
+				value = module_context.symbol_table.get(name)
+				namespace.elements.append((
+					Token(TT_IDENTIFIER, name, node.pos_start, node.pos_end),
+					value.copy()
+				))
+		
+		# registro
+		context.symbol_table.set(module_name, namespace)
+		return res.success(Number.null)
+		
 
 
 	def visit_FuncDefNode(self, node, context):
