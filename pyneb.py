@@ -25,7 +25,7 @@ FILENAME = ''
 ALL_MODULES = [item for item in os.listdir('modules') if item.endswith('.modneb')]
 
 DEFAULT_CONFIG = {
-	'version': "1.5.0",
+	'version': "1.5.2",
 	'author': 'mewplush',
 	'publisher': 'mewplush',
 	'interpreter': 'pyneb',

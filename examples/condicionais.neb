@@ -1,0 +1,7 @@
+# funções condicionais
+
+
+[1, 2, 3].filtrar(função (elemento) => elemento > 1) # [2, 3]
+[1, 2, 3].algum(função (elemento) => elemento > 1) # verdadeiro [2 e 3 são maiores que 1]
+[1, 2, 3].todos(função (elemento) => elemento > 1) # nem todos são maiores que 1
+[3, 1, 2].ordenar() # ordena de forma padrão, pode ter uma função dentro para definir 'metódo de ordenamento'

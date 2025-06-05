@@ -1,0 +1,5 @@
+# NEB 1.5.2
+importar stdlibs
+
+falar(stdlibs.max([1, 2, 3])) # 3
+falar(stdlibs.min([1, 2, 3])) # 1
