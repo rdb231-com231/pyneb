@@ -1,5 +1,0 @@
-#modules/arquivos.neb
-declarar constante arquivo = {
-    escrever: função (path, content) => escrever_arquivo("../" + path, content),
-    ler: função (path) => ler_arquivo("../" + path)
-}

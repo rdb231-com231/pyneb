@@ -167,6 +167,7 @@ TT_FTEXT = 'FTEXT'
 TT_FEXPR = 'FEXPR'
 TT_PE = 'PE'
 TT_ME = 'ME'
+TT_PERCENT = 'PERCENT'
 
 KEYWORDS = [
 	'declarar',
@@ -277,6 +278,9 @@ class Lexer:
 				tokens.append(self.make_number())
 			elif self.current_char in LETTERS:
 				tokens.append(self.make_identifier())
+			elif self.current_char == '%':
+				tokens.append(Token(TT_PERCENT, pos_start=self.pos))
+				self.advance()
 			elif self.current_char == '+':
 				pos_start = self.pos.copy()
 				self.advance()
@@ -938,6 +942,12 @@ class Parser:
 				"Syntaxe Inválida"
 			))
 		return res
+	
+	def skip_newline(self, res):
+		if self.current_tok.type == TT_NEWLINE:
+			res.register_advancement()
+			self.advance()
+			return True
 
 	###################################
 
@@ -2137,14 +2147,19 @@ class Parser:
 					res.register_advancement()
 					self.advance()
 				else:
+					self.skip_newline(res)
 					arg_nodes.append(res.register(self.expr()))
 					if res.error: return res
 
 					while self.current_tok.type == TT_COMMA:
 						res.register_advancement()
 						self.advance()
+						self.skip_newline(res)
+
 						arg_nodes.append(res.register(self.expr()))
 						if res.error: return res
+					
+					self.skip_newline(res)
 
 					if self.current_tok.type != TT_RPAREN:
 						return res.failure(InvalidSyntaxError(
@@ -2214,7 +2229,7 @@ class Parser:
 		return self.power()
 
 	def term(self):
-		return self.bin_op(self.factor, (TT_MUL, TT_DIV))
+		return self.bin_op(self.factor, (TT_MUL, TT_DIV, TT_PERCENT))
 
 	def comp_expr(self):
 		res = ParseResult()
@@ -2431,6 +2446,9 @@ class Value:
 	def powed_by(self, other):
 		return None, self.illegal_operation(other)
 
+	def mod_by(self, other):
+		return None, self.illegal_operation(other)
+
 	def get_comparison_eq(self, other):
 		return None, self.illegal_operation(other)
 
@@ -2531,7 +2549,12 @@ class Number(Value):
 	def powed_by(self, other):
 		if isinstance(other, Number):
 			return Number(self.value ** other.value).set_context(self.context), None
-		return super().get_comparison_gt(other)
+		return super().powed_by(other)
+
+	def mod_by(self, other):
+		if isinstance(other, Number):
+			return Number(self.value % other.value).set_context(self.context), None
+		return super().mod_by(other)
 
 	def get_comparison_eq(self, other):
 		if isinstance(other, Number):
@@ -3860,10 +3883,219 @@ class BuiltInFunction(BaseFunction):
 	
 	def execute_is_callable(self, exec_ctx):
 		return RTResult().success(Number.true if (exec_ctx.symbol_table.get('value').executable) else Number.false)
-
 	execute_is_callable.arg_names = ['value']
 
+	def execute_list_filtrar(self, exec_ctx):
+		res = RTResult()
+		lista = self.obj
+		func = exec_ctx.symbol_table.get('func')
+		
+		if not isinstance(func, BaseFunction):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma função",
+				exec_ctx
+			))
+		
+		new_elements = []
+		for idx, element in enumerate(lista.elements):
+			# Passa índice e elemento para a função
+			args = [Number(idx), element.copy()]
+			condition = res.register(func.execute(args))
+			if res.should_return(): return res
+			
+			if condition.is_true():
+				new_elements.append(element.copy())
+		
+		return res.success(List(new_elements).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
+	execute_list_filtrar.arg_names = ['func']
 
+
+	def execute_list_reduzir(self, exec_ctx):
+		res = RTResult()
+		lista = self.obj
+		func = exec_ctx.symbol_table.get('func')
+		acumulador = exec_ctx.symbol_table.get('inicial')
+		
+		if not isinstance(func, BaseFunction):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Primeiro argumento deve ser uma função",
+				exec_ctx
+			))
+		
+		if not lista.elements:
+			return res.success(acumulador.copy() if acumulador else Number.null)
+		
+		start_idx = 0
+		if isinstance(acumulador, Nulo):
+			acumulador = lista.elements[0].copy()
+			start_idx = 1
+		
+		for i in range(start_idx, len(lista.elements)):
+			args = [acumulador.copy(), lista.elements[i].copy()]
+			acumulador = res.register(func.execute(args))
+			if res.should_return(): return res
+		
+		return res.success(acumulador)
+	execute_list_reduzir.arg_names = ['func', 'inicial']
+	execute_list_reduzir.default_args = [Nulo()]
+
+	def execute_list_ordenar(self, exec_ctx):
+		res = RTResult()
+		lista = self.obj
+		func = exec_ctx.symbol_table.get('func')
+
+		if isinstance(func, Nulo):
+			try:
+				sorted_list = sorted(lista.elements, key=lambda x: x.value)
+				return res.success(List(sorted_list))
+			except:
+				return res.failure(RTError(
+					self.pos_start, self.pos_end,
+					"Não é possível ordenar elementos de tipos diferentes",
+					exec_ctx
+				))
+		
+		if not isinstance(func, BaseFunction):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma função",
+				exec_ctx
+			))
+		
+		n = len(lista.elements)
+		sorted_elements = [elem.copy() for elem in lista.elements]
+		
+		for i in range(n):
+			for j in range(0, n-i-1):
+				args = [sorted_elements[j].copy(), sorted_elements[j+1].copy()]
+				comparison = res.register(func.execute(args))
+				if res.should_return(): return res
+				
+				if comparison.value > 0:
+					sorted_elements[j], sorted_elements[j+1] = sorted_elements[j+1], sorted_elements[j]
+		
+		return res.success(List(sorted_elements))
+	execute_list_ordenar.arg_names = ['func']
+	execute_list_ordenar.default_args = [Nulo()]
+
+	def execute_list_agrupar(self, exec_ctx):
+		res = RTResult()
+		lista = self.obj
+		func = exec_ctx.symbol_table.get('func')
+		
+		if not isinstance(func, BaseFunction):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma função",
+				exec_ctx
+			))
+		
+		groups = {}
+		for idx, element in enumerate(lista.elements):
+			key_val = res.register(func.execute([element.copy()]))
+			if res.should_return(): return res
+			
+			key = str(key_val)
+			if key not in groups:
+				groups[key] = []
+			groups[key].append(element.copy())
+		
+		group_dict = Dict([])
+		for key, values in groups.items():
+			group_dict.elements.append((
+				Token(TT_IDENTIFIER, key, self.pos_start, self.pos_end),
+				List(values)
+			))
+		
+		return res.success(group_dict)
+	execute_list_agrupar.arg_names = ['func']
+
+	def execute_any_tamanho(self, exec_ctx):
+		if isinstance(self.obj, (Class, Instance, Boolean, Nulo)):
+			return RTResult().failure(ValorError(
+				self.pos_start, self.pos_end,
+				f"Tipo {type(self.obj)} não possui tamanho.",
+				exec_ctx
+			))
+		return RTResult().success(Number(len(self.obj.elements if isinstance(self.obj, (List, Dict, Set, Tuple)) else self.obj.value)).set_context(exec_ctx).set_pos(self.pos_start, self.pos_end))
+	execute_any_tamanho.arg_names = []
+
+	def execute_list_todos(self, exec_ctx):
+		res = RTResult()
+		lista = self.obj
+		func = exec_ctx.symbol_table.get('func')
+		
+		if not isinstance(func, BaseFunction):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma função",
+				exec_ctx
+			))
+		
+		for element in lista.elements:
+			# Passa o elemento para a função
+			condition = res.register(func.execute([element.copy()]))
+			if res.should_return(): return res
+			
+			if not condition.is_true():
+				return res.success(Number.false)
+		
+		return res.success(Number.true)
+	execute_list_todos.arg_names = ['func']
+
+	def execute_list_algum(self, exec_ctx):
+		res = RTResult()
+		lista = self.obj
+		func = exec_ctx.symbol_table.get('func')
+		
+		if not isinstance(func, BaseFunction):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma função",
+				exec_ctx
+			))
+		
+		for element in lista.elements:
+			condition = res.register(func.execute([element.copy()]))
+			if res.should_return(): return res
+			
+			if condition.is_true():
+				return res.success(Number.true)
+		
+		return res.success(Number.false)
+	execute_list_algum.arg_names = ['func']
+
+	def execute_string_começa_com(self, exec_ctx):
+		res = RTResult()
+		string = self.obj
+		substring = exec_ctx.symbol_table.get('substring')
+		
+		if not isinstance(substring, String):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma string",
+				exec_ctx
+			))
+		
+		return res.success(Number.true if string.value.startswith(substring.value) else Number.false)
+	execute_string_começa_com.arg_names = ['substring']
+
+	def execute_string_termina_com(self, exec_ctx):
+		res = RTResult()
+		string = self.obj
+		substring = exec_ctx.symbol_table.get('substring')
+		
+		if not isinstance(substring, String):
+			return res.failure(RTError(
+				self.pos_start, self.pos_end,
+				"Argumento deve ser uma string",
+				exec_ctx
+			))
+		
+		return res.success(Number.true if string.value.endswith(substring.value) else Number.false)
+	execute_string_termina_com.arg_names = ['substring']
 
 #######################################
 # CONTEXT
@@ -4149,6 +4381,11 @@ class Interpreter:
 			func.obj = obj
 			func.set_context(context)
 			return res.success(func)
+		elif attr_name == "tamanho":
+			func = BuiltInFunction("any_tamanho")
+			func.obj = obj
+			func.set_context(context)
+			return res.success(func)
 
 		if isinstance(obj, Dict):
 			if attr_name in ["chaves", "valores", "itens", "mudar", "extender"]:
@@ -4169,7 +4406,7 @@ class Interpreter:
 					context
 				))
 		elif isinstance(obj, List):
-			if attr_name in ["invertida", "procurar", "colocar", "map", "estourar", "extender", "mudar"]:
+			if attr_name in ["invertida", "procurar", "filtrar", "algum", "todos", "reduzir", "ordenar", "colocar", "map", "estourar", "extender", "mudar", "agrupar"]:
 				func = BuiltInFunction(f"list_{attr_name}")
 				func.obj = obj
 				func.set_context(context)
@@ -4183,7 +4420,7 @@ class Interpreter:
 					context
 				))
 		elif isinstance(obj, String):
-			if attr_name in ["fatiar", "picotar", "limpar", "maiúsculo", "minúsculo"]:
+			if attr_name in ["fatiar", "picotar", "limpar", "maiúsculo", "minúsculo", "começa_com", "termina_com", "contem", "tamanho", "pode_executar", "tamanho", "pode_executar"]:
 				func = BuiltInFunction(f"string_{attr_name}")
 				func.obj = obj
 				func.set_context(context)
@@ -4595,6 +4832,8 @@ class Interpreter:
 			result, error = left.multed_by(right)
 		elif node.op_tok.type == TT_DIV:
 			result, error = left.dived_by(right)
+		elif node.op_tok.type == TT_PERCENT:
+			result, error = left.mod_by(right)
 		elif node.op_tok.type == TT_POW:
 			result, error = left.powed_by(right)
 		elif node.op_tok.type == TT_EE or node.op_tok.matches(TT_KEYWORD, 'igual'):
